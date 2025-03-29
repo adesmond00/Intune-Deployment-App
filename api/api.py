@@ -1,0 +1,168 @@
+"""
+Intune Deployment Toolkit API
+
+This FastAPI application provides endpoints for managing Intune deployments and configurations.
+It includes functionality for:
+- Searching for applications using winget
+- Executing PowerShell scripts
+- Managing deployment configurations
+
+The API is designed to be used as part of a larger Intune deployment toolkit,
+providing programmatic access to common deployment tasks.
+
+Author: [Your Name]
+Version: 1.0.0
+"""
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+import uvicorn
+import subprocess
+import json
+from winget import WingetSearch, search_applications
+
+# Initialize FastAPI application with metadata
+app = FastAPI(
+    title="Intune Deployment Toolkit API",
+    description="API for managing Intune deployments and configurations",
+    version="1.0.0"
+)
+
+# Data Models
+class Deployment(BaseModel):
+    """
+    Represents an Intune deployment configuration.
+    
+    Attributes:
+        id (str): Unique identifier for the deployment
+        name (str): Display name of the deployment
+        description (Optional[str]): Detailed description of the deployment
+        status (str): Current status of the deployment
+        target_devices (List[str]): List of device IDs targeted by this deployment
+    """
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    target_devices: List[str]
+
+class ScriptExecution(BaseModel):
+    """
+    Represents a PowerShell script execution request.
+    
+    Attributes:
+        script_path (str): Full path to the PowerShell script to execute
+        parameters (Optional[dict]): Dictionary of parameters to pass to the script
+    """
+    script_path: str
+    parameters: Optional[dict] = None
+
+# In-memory storage for deployments (replace with database in production)
+deployments = []
+
+@app.get("/")
+async def root():
+    """
+    Root endpoint that provides a welcome message.
+    
+    Returns:
+        dict: A welcome message
+    """
+    return {"message": "Welcome to the Intune Deployment Toolkit API"}
+
+@app.post("/winget-search")
+async def winget_search(search: WingetSearch):
+    """
+    Search for applications using winget.
+    
+    This endpoint executes a winget search command and returns the results
+    in a structured format. It handles various edge cases and provides
+    proper error handling.
+    
+    Args:
+        search (WingetSearch): The search request containing the search term
+        
+    Returns:
+        dict: A dictionary containing:
+            - status: Success/failure status
+            - results: List of found applications with their details
+            - message: Optional message (e.g., "No results found")
+            
+    Raises:
+        HTTPException: If the winget command fails or encounters an error
+    """
+    try:
+        return search_applications(search.search_term)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+@app.post("/execute-script")
+async def execute_script(script_execution: ScriptExecution):
+    """
+    Execute a PowerShell script with optional parameters.
+    
+    This endpoint runs a PowerShell script with the specified parameters
+    and returns the execution results. It handles script execution errors
+    and provides detailed output.
+    
+    Args:
+        script_execution (ScriptExecution): The script execution request containing:
+            - script_path: Path to the PowerShell script
+            - parameters: Optional dictionary of parameters
+            
+    Returns:
+        dict: A dictionary containing:
+            - status: Success/failure status
+            - output: Script output
+            - error: Any error messages
+            
+    Raises:
+        HTTPException: If the script execution fails or encounters an error
+    """
+    try:
+        # Construct PowerShell command with execution policy bypass
+        powershell_command = ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", script_execution.script_path]
+        
+        # Add parameters if provided
+        if script_execution.parameters:
+            param_string = " ".join([f"-{k} {v}" for k, v in script_execution.parameters.items()])
+            powershell_command.append(param_string)
+        
+        # Execute the script with proper encoding
+        process = subprocess.Popen(
+            powershell_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        # Get the script output and any errors
+        stdout, stderr = process.communicate()
+        
+        # Check if the script executed successfully
+        if process.returncode == 0:
+            return {
+                "status": "success",
+                "output": stdout,
+                "error": stderr
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Script execution failed: {stderr}"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error executing script: {str(e)}"
+        )
+
+# Entry point for running the API server
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
