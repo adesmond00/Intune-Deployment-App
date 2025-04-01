@@ -13,13 +13,14 @@ import { API_BASE_URL } from '../config'; // Import the configurable API base UR
 /**
  * Interface representing the structure of a Winget application object
  * returned by the backend API's /winget-search endpoint.
+ * NOTE: Keys are lowercase to match the actual JSON response.
  */
 interface WingetApp {
-  Name: string;
-  Id: string;
-  Version: string;
+  name: string;  // Changed from Name
+  id: string;    // Changed from Id
+  version: string; // Changed from Version
   // Add other relevant fields from the API response if needed, like 'Source'
-  Source?: string;
+  source?: string; // Changed from Source
 }
 
 /**
@@ -99,12 +100,12 @@ const WingetAppPage: React.FC = () => {
    * @param appToAdd - The WingetApp object to add to the staging list.
    */
   const handleAddApp = (appToAdd: WingetApp) => {
-    // Check if the app (by ID) is already in the stagedApps list
-    if (!stagedApps.some((app) => app.Id === appToAdd.Id)) {
+    // Check if the app (by ID) is already in the stagedApps list using lowercase 'id'
+    if (!stagedApps.some((app) => app.id === appToAdd.id)) {
       setStagedApps([...stagedApps, appToAdd]);
     } else {
-      // Optional: Provide feedback that the app is already staged
-      console.log(`App "${appToAdd.Name}" is already staged.`);
+      // Optional: Provide feedback that the app is already staged using lowercase 'name'
+      console.log(`App "${appToAdd.name}" is already staged.`);
     }
   };
 
@@ -149,15 +150,16 @@ const WingetAppPage: React.FC = () => {
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {searchResults.map((app) => (
                 <div
-                  key={app.Id}
+                  key={app.id} // Use lowercase id for key
                   className="group flex justify-between items-center p-3 border rounded hover:bg-gray-100"
                 >
                   <div>
-                    <p className="font-medium">{app.Name}</p>
-                    <p className="text-sm text-gray-600">ID: {app.Id}</p>
-                    <p className="text-sm text-gray-600">Version: {app.Version}</p>
+                    {/* Access properties using lowercase keys */}
+                    <p className="font-medium">{app.name}</p>
+                    <p className="text-sm text-gray-600">ID: {app.id}</p>
+                    <p className="text-sm text-gray-600">Version: {app.version}</p>
                     {/* Optionally display the source if available */}
-                    {app.Source && <p className="text-xs text-gray-500">Source: {app.Source}</p>}
+                    {app.source && <p className="text-xs text-gray-500">Source: {app.source}</p>}
                   </div>
                   {/* Add button appears on hover */}
                   <button
@@ -185,12 +187,13 @@ const WingetAppPage: React.FC = () => {
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto mb-4">
               {stagedApps.map((app) => (
-                <div key={app.Id} className="p-3 border rounded bg-gray-50">
-                  <p className="font-medium">{app.Name}</p>
-                  <p className="text-sm text-gray-600">ID: {app.Id}</p>
-                  <p className="text-sm text-gray-600">Version: {app.Version}</p>
+                <div key={app.id} className="p-3 border rounded bg-gray-50"> {/* Use lowercase id for key */}
+                  {/* Access properties using lowercase keys */}
+                  <p className="font-medium">{app.name}</p>
+                  <p className="text-sm text-gray-600">ID: {app.id}</p>
+                  <p className="text-sm text-gray-600">Version: {app.version}</p>
                   {/* Optionally display the source if available */}
-                  {app.Source && <p className="text-xs text-gray-500">Source: {app.Source}</p>}
+                  {app.source && <p className="text-xs text-gray-500">Source: {app.source}</p>}
                   {/* Optional: Add a "Remove" button here later */}
                 </div>
               ))}

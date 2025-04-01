@@ -55,4 +55,4 @@
 *   Security vulnerabilities in the current `/execute-script` endpoint design.
 *   (Resolved) The `/winget-search` endpoint previously accepted POST instead of GET.
 *   (Resolved) Syntax error in `api/api.py` related to the `/winget-search` modification.
-*   (Resolved) Frontend failed to display search results due to incorrect parsing of the API response structure.
+*   (Resolved) Frontend failed to display search results due to incorrect parsing of the API response structure (both parsing the nested array and using incorrect case for property names).
