@@ -92,11 +92,11 @@ function Add-AppToIntune {
         [Parameter(Mandatory = $true)]
         [string]$Publisher,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $true)]
         [ValidateSet("system", "user")]
         [string]$InstallExperience = "system",
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $true)]
         [ValidateSet("suppress", "force", "basedOnReturnCode")]
         [string]$RestartBehavior = "suppress",
 

@@ -10,4 +10,7 @@
  */
 export const API_BASE_URL = 'http://localhost:8000';
 
+// Set to true to enable debug-specific UI elements and features
+export const debugMode = true;
+
 // Add other frontend configuration constants here as needed.

@@ -1,10 +1,13 @@
 /**
  * SettingsModal Component
  *
- * Displays application settings, currently including a dark mode toggle.
+ * Displays application settings, including dark mode and tenant connection options.
  */
-import React from 'react';
+import React, { useState } from 'react'; // Add useState
 import { useTheme } from '../context/ThemeContext'; // Import the custom hook
+import { useTenant } from '../context/TenantContext'; // Import the tenant hook
+import { debugMode } from '../config'; // Import the debug flag
+import TenantConnectionModal from './TenantConnectionModal'; // Import the connection modal
 
 /**
  * Props for the SettingsModal component.
@@ -16,6 +19,22 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const { theme, toggleTheme } = useTheme(); // Consume the theme context
+  const { isConnected, disconnect, mockConnect, mockDisconnect, tenantId } = useTenant(); // Consume tenant context
+  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false); // State for connection modal
+
+  const openConnectionModal = () => setIsConnectionModalOpen(true);
+  const closeConnectionModal = () => setIsConnectionModalOpen(false);
+
+  // Handle mock toggle change
+  const handleMockToggle = () => {
+    if (isConnected && tenantId === 'mock-tenant-id') {
+      mockDisconnect();
+    } else if (!isConnected) { // Only allow mock connect if not already connected (real or mock)
+      mockConnect('Mock Tenant');
+    }
+    // Do nothing if trying to toggle mock while a real connection exists
+  };
+
 
   if (!isOpen) {
     return null; // Don't render if not open
@@ -62,7 +81,57 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             </button>
           </div>
 
-          {/* Add other settings here later */}
+          {/* Divider */}
+          <hr className="border-gray-200 dark:border-gray-700" />
+
+          {/* Tenant Connection Section */}
+          <div>
+            <h5 className="text-md font-semibold mb-2 text-gray-800 dark:text-gray-200">Tenant Connection</h5>
+            {isConnected ? (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600 dark:text-gray-400">
+                  Connected as: {tenantId === 'mock-tenant-id' ? 'Mock Tenant' : tenantId}
+                </span>
+                <button
+                  onClick={disconnect}
+                  className="px-3 py-1 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-800"
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={openConnectionModal}
+                className="w-full px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800"
+              >
+                Connect to Tenant
+              </button>
+            )}
+          </div>
+
+          {/* Debug Mode Section (Conditional) */}
+          {debugMode && (
+            <>
+              <hr className="border-gray-200 dark:border-gray-700" />
+              <div>
+                 <h5 className="text-md font-semibold mb-2 text-gray-800 dark:text-gray-200">Debugging</h5>
+                 <div className="flex items-center justify-between">
+                    <span className="text-gray-700 dark:text-gray-300">Toggle Mock Connection</span>
+                    <button
+                      onClick={handleMockToggle}
+                      className={`${switchBaseClasses} ${isConnected && tenantId === 'mock-tenant-id' ? switchCheckedClasses : ''} ${isConnected && tenantId !== 'mock-tenant-id' ? 'opacity-50 cursor-not-allowed' : ''}`} // Dim if real connection exists
+                      aria-checked={isConnected && tenantId === 'mock-tenant-id'}
+                      role="switch"
+                      disabled={isConnected && tenantId !== 'mock-tenant-id'} // Disable if real connection exists
+                    >
+                      <div
+                        className={`${switchKnobBaseClasses} ${isConnected && tenantId === 'mock-tenant-id' ? switchKnobCheckedClasses : ''}`}
+                      ></div>
+                    </button>
+                 </div>
+              </div>
+            </>
+          )}
 
         </div>
 
@@ -76,6 +145,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
            </button>
          </div> */}
       </div>
+
+      {/* Render the Tenant Connection Modal */}
+      <TenantConnectionModal
+        isOpen={isConnectionModalOpen}
+        onClose={closeConnectionModal}
+      />
     </>
   );
 };
