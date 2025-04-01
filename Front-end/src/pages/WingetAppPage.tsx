@@ -35,12 +35,24 @@ interface WingetSearchResponse {
 
 /**
  * Interface representing the structured information needed for a staged deployment.
- * This will be expanded later with more deployment-specific parameters.
+ * This holds data gathered initially and potentially edited by the user before deployment.
+ * It aligns with parameters needed by the Add-AppToIntune PowerShell script.
+ * Fields requiring dedicated UI later are initialized to null or defaults.
  */
 interface StagedAppDeploymentInfo {
-  displayName: string; // The name to be used for the app in Intune
-  id: string;          // The Winget ID, used for potential installation commands
-  // Add other deployment-specific fields here later (e.g., install command, detection rules)
+  displayName: string; // Maps to $DisplayName, initially from wingetApp.name
+  id: string;          // The Winget ID, potentially used for install/uninstall commands
+  version: string;     // Version info from winget search
+  publisher: string | null; // Maps to $Publisher, initially null
+  description: string | null; // Maps to $Description, initially null
+  installCommandLine: string | null; // Maps to $InstallCommandLine, initially null
+  uninstallCommandLine: string | null; // Maps to $UninstallCommandLine, initially null
+  detectionRuleNotes: string | null; // Placeholder for detection rule info, initially null
+  requirementRuleNotes: string | null; // Placeholder for requirement rule info, initially null
+  installExperience: 'system' | 'user'; // Maps to $InstallExperience, default 'system'
+  restartBehavior: 'suppress' | 'force' | 'basedOnReturnCode'; // Maps to $RestartBehavior, default 'suppress'
+  // $IntuneWinFile is generated later, not stored here.
+  // $DetectionRule and $RequirementRule objects are complex and will likely be configured differently.
 }
 
 
@@ -113,11 +125,20 @@ const WingetAppPage: React.FC = () => {
   const handleAddApp = (appToAdd: WingetApp) => {
     // Check if an app with the same ID is already in the stagedApps list
     if (!stagedApps.some((stagedApp) => stagedApp.id === appToAdd.id)) {
-      // Create the StagedAppDeploymentInfo object from the WingetApp data
+      // Create the StagedAppDeploymentInfo object, mapping data from WingetApp
+      // and setting defaults or null for fields requiring user input later.
       const newStagedApp: StagedAppDeploymentInfo = {
-        displayName: appToAdd.name, // Use the name from search results as the initial display name
+        displayName: appToAdd.name,
         id: appToAdd.id,
-        // Initialize other deployment fields here if they were added to the interface
+        version: appToAdd.version,
+        publisher: null, // Requires user input or later inference
+        description: null, // Requires user input
+        installCommandLine: null, // Requires user input or smart default generation
+        uninstallCommandLine: null, // Requires user input or smart default generation
+        detectionRuleNotes: null, // Placeholder
+        requirementRuleNotes: null, // Placeholder
+        installExperience: 'system', // Default
+        restartBehavior: 'suppress', // Default
       };
       // Add the structured deployment info to the state
       setStagedApps([...stagedApps, newStagedApp]);
@@ -206,11 +227,17 @@ const WingetAppPage: React.FC = () => {
             <div className="space-y-2 max-h-96 overflow-y-auto mb-4">
               {/* Map over the stagedApps array containing StagedAppDeploymentInfo objects */}
               {stagedApps.map((stagedApp) => (
-                <div key={stagedApp.id} className="p-3 border rounded bg-gray-50">
-                  {/* Access properties from the StagedAppDeploymentInfo object */}
-                  <p className="font-medium">{stagedApp.displayName}</p>
-                  <p className="text-sm text-gray-600">ID: {stagedApp.id}</p>
-                  {/* Note: Version and Source are not part of StagedAppDeploymentInfo currently */}
+                <div key={stagedApp.id} className="p-3 border rounded bg-gray-50 text-sm">
+                  {/* Display properties from the StagedAppDeploymentInfo object */}
+                  <p className="font-medium text-base mb-1">{stagedApp.displayName}</p>
+                  <p><span className="font-semibold">ID:</span> {stagedApp.id}</p>
+                  <p><span className="font-semibold">Version:</span> {stagedApp.version}</p>
+                  <p><span className="font-semibold">Publisher:</span> {stagedApp.publisher || <span className="italic text-gray-500">(Not set)</span>}</p>
+                  <p><span className="font-semibold">Description:</span> {stagedApp.description || <span className="italic text-gray-500">(Not set)</span>}</p>
+                  <p><span className="font-semibold">Install Cmd:</span> {stagedApp.installCommandLine || <span className="italic text-gray-500">(Not set)</span>}</p>
+                  <p><span className="font-semibold">Uninstall Cmd:</span> {stagedApp.uninstallCommandLine || <span className="italic text-gray-500">(Not set)</span>}</p>
+                  <p><span className="font-semibold">Detection:</span> {stagedApp.detectionRuleNotes || <span className="italic text-gray-500">(Not set)</span>}</p>
+                  {/* Add more fields as needed */}
                   {/* Optional: Add a "Remove" button here later */}
                 </div>
               ))}

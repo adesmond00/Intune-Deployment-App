@@ -11,7 +11,7 @@
     *   A `WingetAppPage` component (`Front-end/src/pages/WingetAppPage.tsx`) providing:
         *   UI for searching Winget apps via the `/winget-search` API.
         *   Correct handling and display of search results (parsing the nested `results` array from the API response).
-        *   Ability to "stage" apps into a separate list, storing structured deployment info (`StagedAppDeploymentInfo` interface with `displayName` and `id`).
+        *   Ability to "stage" apps into a separate list, storing structured deployment info (`StagedAppDeploymentInfo` interface with fields like `displayName`, `id`, `version`, `publisher`, `description`, etc., initialized appropriately).
         *   Basic loading and error handling for the search.
         *   Placeholder "Deploy" button.
     *   Functional navigation links in the sidebar and on the Applications page.

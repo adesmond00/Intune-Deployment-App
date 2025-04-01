@@ -22,10 +22,10 @@ Implementing the frontend functionality for searching and staging Winget applica
     *   Updated `WingetAppPage.tsx` to correctly parse the nested `results` array from the `/winget-search` API response object. Added `WingetSearchResponse` interface for type safety.
     *   Corrected property access in `WingetAppPage.tsx` (interface definition and JSX rendering) to use lowercase keys (`name`, `id`, `version`, `source`) matching the actual API response, resolving the issue where results were listed but data was not displayed.
 *   **Fixed Backend Parsing:** Improved the parsing logic in `api/winget.py` to reliably skip header and separator lines from the `winget search` output, preventing the header row from appearing as a result in the frontend.
-*   **Structured Staging Data:** Introduced the `StagedAppDeploymentInfo` interface in `WingetAppPage.tsx` to define the structure for apps added to the staging area (initially `displayName` and `id`). Updated the `stagedApps` state and `handleAddApp` function to use this interface, preparing for future deployment parameter additions.
+*   **Structured Staging Data:** Enhanced the `StagedAppDeploymentInfo` interface in `WingetAppPage.tsx` to include more fields relevant to the `Add-AppToIntune.ps1` script (`displayName`, `id`, `version`, `publisher`, `description`, command lines, rule notes, install experience, restart behavior), initializing most with `null` or defaults. Updated the `stagedApps` state, `handleAddApp` function, and display logic to use this enhanced interface.
 
 ## Next Steps (Project Development)
-With the Winget search UI displaying results correctly, the backend fixed, and staging data structured, focus can shift to:
+With the Winget search UI displaying results correctly, the backend fixed, and staging data structured with more relevant fields, focus can shift to:
 *   Implementing the actual deployment logic triggered by the "Deploy" button on the `WingetAppPage`. This involves:
     *   Creating a new backend API endpoint (or modifying `/execute-script`) to handle the deployment orchestration (packaging, uploading, creating Intune app).
     *   Connecting the frontend "Deploy" button to this new backend logic.
