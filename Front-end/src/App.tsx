@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 // Placeholder imports for page components (will be created next)
 import DashboardPage from './pages/DashboardPage';
 import ApplicationsPage from './pages/ApplicationsPage.tsx'; // Explicitly add .tsx extension
+import WingetAppPage from './pages/WingetAppPage'; // Import the new Winget page component
 
 interface HeaderProps {
   toggleSidebar: () => void;
@@ -59,6 +60,8 @@ function App() {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/applications" element={<ApplicationsPage />} />
+            {/* Route for the Winget application search and staging page */}
+            <Route path="/applications/winget" element={<WingetAppPage />} />
             {/* Add other routes here as needed */}
           </Routes>
         </main>

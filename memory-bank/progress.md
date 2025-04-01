@@ -7,8 +7,15 @@
     *   Client-side routing implemented using `react-router-dom`.
     *   Routes defined for `/` (Dashboard) and `/applications`.
     *   A placeholder `DashboardPage` component (`Front-end/src/pages/DashboardPage.tsx`).
-    *   An `ApplicationsPage` component (`Front-end/src/pages/ApplicationsPage.tsx`) with a welcome message and placeholder buttons.
-    *   Functional navigation links in the sidebar for Dashboard and Applications.
+    *   An `ApplicationsPage` component (`Front-end/src/pages/ApplicationsPage.tsx`) with a welcome message and navigation links/buttons.
+    *   A `WingetAppPage` component (`Front-end/src/pages/WingetAppPage.tsx`) providing:
+        *   UI for searching Winget apps via the `/winget-search` API.
+        *   Display of search results.
+        *   Ability to "stage" apps into a separate list.
+        *   Basic loading and error handling for the search.
+        *   Placeholder "Deploy" button.
+    *   Functional navigation links in the sidebar and on the Applications page.
+    *   Configuration file (`Front-end/src/config.ts`) for API base URL.
 *   **Backend API Foundation**: A FastAPI application (`api/`) is set up with basic endpoints:
     *   `/`: Welcome message.
     *   `/winget-search`: Accepts a search term and uses `api/winget.py` to execute `winget search`, returning parsed results.
@@ -24,12 +31,14 @@
 
 ## What's Missing / Incomplete / Needs Work
 
-*   **Frontend Functionality**: While routing exists, the pages themselves lack dynamic functionality:
-    *   The buttons on the `ApplicationsPage` ("Add an App with Winget", "Add an App with Scoop") are not wired up.
-    *   No components exist for searching applications, displaying results, configuring details, triggering actions, or showing status.
-*   **Backend Orchestration Logic**: The API currently only executes *single* scripts. It lacks the higher-level logic to orchestrate the full workflow (e.g., take UI input -> call packaging script -> call add app script).
+*   **Frontend Functionality**:
+    *   The Winget search/staging UI (`WingetAppPage`) is functional but the "Deploy" button is a placeholder.
+    *   The "Add an App with Scoop" button on `ApplicationsPage` is not wired up.
+    *   No components exist for adding/configuring custom MSI/EXE applications.
+    *   No UI exists for displaying deployment status/feedback beyond basic search errors.
+*   **Backend Orchestration Logic**: The API currently only executes *single* scripts (`/execute-script`) or performs searches (`/winget-search`). It lacks the higher-level logic to orchestrate the full deployment workflow (e.g., take staged apps list -> trigger packaging -> trigger Intune upload/creation).
 *   **Packaging Logic**: `scripts/Package-MSI.ps1` is incomplete. It needs the actual implementation to use the `IntuneWin32App` module (specifically `New-IntuneWin32AppPackage`) to create the `.intunewin` file from source files (like MSI/EXE).
-*   **Integration**: No functional connection exists between the frontend actions (e.g., button clicks) and the backend API.
+*   **Integration**: The frontend Winget search is integrated with the backend `/winget-search` API. However, the deployment step (frontend "Deploy" button to backend orchestration) is not integrated.
 *   **`main.ps1`**: This file is empty and its purpose is undefined.
 *   **Error Handling**: No comprehensive error handling across the frontend-API-script layers.
 *   **Security**: API endpoint for script execution is insecure. Intune connection uses interactive auth, unsuitable for automation.

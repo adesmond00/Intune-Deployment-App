@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom'; // Import Link for navigation
 
 const ApplicationsPage: React.FC = () => {
   return (
@@ -9,9 +10,13 @@ const ApplicationsPage: React.FC = () => {
           Welcome to the application management section. Choose an option below to add a new application to Intune.
         </p>
         <div className="flex space-x-4">
-          <button className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded transition-colors">
+          {/* Link to the Winget application search page */}
+          <Link
+            to="/applications/winget"
+            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded transition-colors"
+          >
             Add an App with Winget
-          </button>
+          </Link>
           <button className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded transition-colors">
             Add an App with Scoop
           </button>
