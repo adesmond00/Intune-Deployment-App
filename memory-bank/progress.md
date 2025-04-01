@@ -18,7 +18,7 @@
     *   Configuration file (`Front-end/src/config.ts`) for API base URL.
 *   **Backend API Foundation**: A FastAPI application (`api/`) is set up with basic endpoints:
     *   `/`: Welcome message.
-    *   `/winget-search`: Accepts a search term via `GET` request query parameter (`?term=...`) and uses `api/winget.py` to execute `winget search`, returning parsed results. (Method changed from POST to GET).
+    *   `/winget-search`: Accepts a search term via `GET` request query parameter (`?term=...`) and uses `api/winget.py` to execute `winget search`, returning parsed results. (Method changed from POST to GET, syntax error fixed).
     *   `/execute-script`: Accepts a script path and parameters via `POST`, executes the specified PowerShell script using `subprocess.Popen`, and returns stdout/stderr. This is a generic executor.
 *   **Winget Search Logic**: The `api/winget.py` module successfully calls `winget search`, parses the output into a structured list of applications, and no longer contains the unused `WingetSearch` Pydantic model.
 *   **Intune Connection Script**: `scripts/Connect-to-Intune.ps1` provides a function to install necessary modules (`IntuneWin32App`, `Microsoft.Graph.Intune`) and connect to Intune using interactive authentication.
@@ -50,3 +50,4 @@
 *   None explicitly documented, but the incompleteness of major components (packaging, orchestration, UI functionality) is the primary "issue".
 *   Security vulnerabilities in the current `/execute-script` endpoint design.
 *   (Resolved) The `/winget-search` endpoint previously accepted POST instead of GET.
+*   (Resolved) Syntax error in `api/api.py` related to the `/winget-search` modification.

@@ -93,20 +93,10 @@ async def winget_search(term: str): # Changed input from Pydantic model to query
         # Pass the query parameter 'term' directly to the search function
         return search_applications(term)
     except Exception as e:
-        raise HTTPException(
-            - status: Success/failure status
-            - results: List of found applications with their details
-            - message: Optional message (e.g., "No results found")
-            
-    Raises:
-        HTTPException: If the winget command fails or encounters an error
-    """
-    try:
-        return search_applications(search.search_term)
-    except Exception as e:
+        # Raise HTTPException with a 500 status code if any error occurs during search
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"Error performing winget search: {str(e)}"
         )
 
 @app.post("/execute-script")

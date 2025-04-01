@@ -15,7 +15,7 @@ Implementing the frontend functionality for searching and staging Winget applica
     *   Added comments and basic error handling.
 *   Added a new route `/applications/winget` in `Front-end/src/App.tsx` pointing to `WingetAppPage`.
 *   Updated the "Add an App with Winget" button in `Front-end/src/pages/ApplicationsPage.tsx` to be a `Link` component navigating to the new `/applications/winget` route.
-*   **Fixed Backend API:** Modified the `/winget-search` endpoint in `api/api.py` to accept `GET` requests instead of `POST`, aligning with REST principles and resolving the `405 Method Not Allowed` error reported by the user. Removed the unused `WingetSearch` Pydantic model from `api/winget.py`.
+*   **Fixed Backend API:** Modified the `/winget-search` endpoint in `api/api.py` to accept `GET` requests instead of `POST`, aligning with REST principles and resolving the `405 Method Not Allowed` error reported by the user. Removed the unused `WingetSearch` Pydantic model from `api/winget.py`. Corrected a syntax error in `api/api.py` introduced during the previous modification.
 
 ## Next Steps (Project Development)
 With the Winget search UI functional and the backend API corrected, focus can shift to:
