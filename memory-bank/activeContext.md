@@ -4,6 +4,7 @@
 Debugging and refining existing UI features, including dark mode.
 
 ## Recent Activity
+*   **Fixed Tenant Connection Modal Visibility:** Increased the `z-index` of the main container in `Front-end/src/components/TenantConnectionModal.tsx` from `z-40` to `z-60` to ensure it renders above the `SettingsModal` backdrop and content.
 *   **Fixed Dark Mode Toggle:** Refined the `useEffect` hook in `Front-end/src/context/ThemeContext.tsx` to correctly add/remove the `dark` class on the `<html>` element, resolving the issue where the UI didn't visually update when the theme was toggled.
 *   **Implemented Tenant Connection UI:**
     *   Added `debugMode` flag to `Front-end/src/config.ts`.

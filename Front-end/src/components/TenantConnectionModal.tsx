@@ -27,7 +27,7 @@ const TenantConnectionModal: React.FC<TenantConnectionModalProps> = ({ isOpen, o
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-center p-4">
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-60 flex justify-center items-center p-4"> {/* Increased z-index */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100">Connect to Tenant</h2>
