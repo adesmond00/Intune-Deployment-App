@@ -1,0 +1,24 @@
+# Cline Rules: Intune Deployment Toolkit
+
+## Project Structure
+*   **Frontend**: All React/TypeScript/Vite/Tailwind code resides in the `Front-end/` directory.
+*   **Backend API**: All Python/FastAPI code resides in the `api/` directory.
+*   **Scripts**: All core PowerShell logic resides in the `scripts/` directory.
+*   **Memory Bank**: All project documentation (Markdown files, rules) resides in the `memory-bank/` directory.
+
+## Technology Stack
+*   **Frontend**: React, TypeScript, Vite, TailwindCSS
+*   **Backend**: Python, FastAPI, Uvicorn, Pydantic
+*   **Scripting**: PowerShell (leveraging `IntuneWin32App` and `Microsoft.Graph.Intune` modules)
+*   **External Tools**: `winget.exe`, `7zip` (used by scripts)
+
+## Key Workflow
+*   Frontend (UI) -> Backend API (Orchestration) -> PowerShell Scripts (Execution) -> Intune/Winget
+
+## Initial Observations & Patterns
+*   The backend API acts as a facade over PowerShell scripts.
+*   PowerShell scripts are modular, focusing on specific tasks (connect, package, add, install).
+*   `Winget-InstallPackage.ps1` is notably robust, handling dependencies and edge cases for winget execution.
+*   Interactive authentication (`Connect-to-Intune.ps1`) is used currently, which will need review for automated scenarios.
+*   The `/execute-script` API endpoint is very generic and needs security hardening.
+*   **Component Structure**: Prefer extracting distinct UI sections (like the `Sidebar`) into their own components (`src/components/`) for better modularity and maintainability, as done with `Sidebar.tsx`.

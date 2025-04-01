@@ -1,5 +1,9 @@
-import React, { useState } from 'react'; // Add React import
-import { Sidebar } from './components/Sidebar'; // Import the extracted Sidebar
+import React, { useState } from 'react';
+import { Routes, Route } from 'react-router-dom'; // Import routing components
+import { Sidebar } from './components/Sidebar';
+// Placeholder imports for page components (will be created next)
+import DashboardPage from './pages/DashboardPage';
+import ApplicationsPage from './pages/ApplicationsPage.tsx'; // Explicitly add .tsx extension
 
 interface HeaderProps {
   toggleSidebar: () => void;
@@ -51,14 +55,12 @@ function App() {
       `}>
         <Header toggleSidebar={toggleSidebar} />
         <main className="flex-1 p-6 overflow-auto"> {/* Ensure main content scrolls */}
-          <div className="max-w-4xl mx-auto">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Welcome to Intune Deployment Toolkit</h2>
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <p className="text-gray-600">
-                This is a placeholder for your application content. The header and sidebar are now functional.
-              </p>
-            </div>
-          </div>
+          {/* Define routes */}
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/applications" element={<ApplicationsPage />} />
+            {/* Add other routes here as needed */}
+          </Routes>
         </main>
       </div>
     </div>
