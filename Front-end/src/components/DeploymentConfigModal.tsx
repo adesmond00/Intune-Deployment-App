@@ -6,23 +6,9 @@
  * Features a side menu listing staged apps and a main area for configuring the selected app.
  */
 import React, { useState, useEffect } from 'react';
-
-// Assuming StagedAppDeploymentInfo is defined elsewhere (e.g., WingetAppPage or a shared types file)
-// We might need to import or redefine it. For now, let's redefine it for clarity.
+// Import the interface from the page component
 // TODO: Consider moving shared interfaces to a dedicated types file (e.g., src/types.ts)
-interface StagedAppDeploymentInfo {
-  displayName: string;
-  id: string;
-  version: string;
-  publisher: string | null;
-  description: string | null;
-  installCommandLine: string | null;
-  uninstallCommandLine: string | null;
-  detectionRuleNotes: string | null;
-  requirementRuleNotes: string | null;
-  installExperience: 'system' | 'user';
-  restartBehavior: 'suppress' | 'force' | 'basedOnReturnCode';
-}
+import { StagedAppDeploymentInfo } from '../pages/WingetAppPage';
 
 /**
  * Props for the DeploymentConfigModal component.
@@ -32,6 +18,7 @@ interface DeploymentConfigModalProps {
   onClose: () => void; // Function to call when closing the modal
   appsToConfigure: StagedAppDeploymentInfo[]; // Array of apps to configure
   onUpdateApp: (index: number, updatedApp: StagedAppDeploymentInfo) => void; // Callback to update app data in parent state
+  onToggleLock: (index: number) => void; // Callback to toggle the lock state in parent
 }
 
 const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
@@ -39,8 +26,12 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
   onClose,
   appsToConfigure,
   onUpdateApp,
+  onToggleLock, // Destructure the new prop
 }) => {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
+
+  // Get the lock status of the currently selected app
+  const isCurrentAppLocked = appsToConfigure[selectedIndex]?.isLocked ?? false;
 
   useEffect(() => {
     if (isOpen) {
@@ -132,7 +123,8 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     id={`displayName-${currentApp.id}`}
                     value={currentApp.displayName}
                     onChange={(e) => handleInputChange('displayName', e.target.value)}
-                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    disabled={isCurrentAppLocked} // Disable if locked
+                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                   />
                 </div>
 
@@ -146,7 +138,8 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     rows={3}
                     value={currentApp.description || ''}
                     onChange={(e) => handleInputChange('description', e.target.value)}
-                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    disabled={isCurrentAppLocked} // Disable if locked
+                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                     placeholder="Enter application description..."
                   />
                 </div>
@@ -161,7 +154,8 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     id={`publisher-${currentApp.id}`}
                     value={currentApp.publisher || ''}
                     onChange={(e) => handleInputChange('publisher', e.target.value)}
-                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    disabled={isCurrentAppLocked} // Disable if locked
+                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                     placeholder="Enter publisher name..."
                   />
                 </div>
@@ -175,7 +169,8 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                      id={`installExperience-${currentApp.id}`}
                      value={currentApp.installExperience}
                      onChange={(e) => handleInputChange('installExperience', e.target.value as 'system' | 'user')}
-                     className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                     disabled={isCurrentAppLocked} // Disable if locked
+                     className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                    >
                      <option value="system">System</option>
                      <option value="user">User</option>
@@ -191,7 +186,8 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                      id={`restartBehavior-${currentApp.id}`}
                      value={currentApp.restartBehavior}
                      onChange={(e) => handleInputChange('restartBehavior', e.target.value as 'suppress' | 'force')}
-                     className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                     disabled={isCurrentAppLocked} // Disable if locked
+                     className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                    >
                      <option value="suppress">Suppress</option>
                      <option value="force">Force</option>
@@ -255,11 +251,19 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
           >
             Cancel
           </button>
+          {/* Lock/Unlock Button */}
           <button
-            onClick={onClose} // Simple close for now
-            className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded"
+            onClick={() => onToggleLock(selectedIndex)}
+            disabled={!currentApp} // Disable if no app is selected
+            className={`px-4 py-2 text-white rounded transition-colors duration-150 ease-in-out
+              ${isCurrentAppLocked
+                ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500' // Red for Unlock
+                : 'bg-green-600 hover:bg-green-700 focus:ring-green-500' // Green for Lock
+              }
+              focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-800
+              disabled:bg-gray-400 disabled:cursor-not-allowed`}
           >
-            Confirm Configuration (Placeholder)
+            {isCurrentAppLocked ? 'Unlock Configuration' : 'Lock Configuration'}
           </button>
         </div>
 

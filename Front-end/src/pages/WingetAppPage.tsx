@@ -39,7 +39,8 @@ interface WingetSearchResponse {
  * It aligns with parameters needed by the Add-AppToIntune PowerShell script.
  * Fields requiring dedicated UI later are initialized to null or defaults.
  */
-interface StagedAppDeploymentInfo {
+// Export the interface so it can be imported by other components
+export interface StagedAppDeploymentInfo {
   displayName: string; // Maps to $DisplayName, initially from wingetApp.name
   id: string;          // The Winget ID, potentially used for install/uninstall commands
   version: string;     // Version info from winget search
@@ -51,6 +52,7 @@ interface StagedAppDeploymentInfo {
   requirementRuleNotes: string | null; // Placeholder for requirement rule info, initially null
   installExperience: 'system' | 'user'; // Maps to $InstallExperience, default 'system'
   restartBehavior: 'suppress' | 'force' | 'basedOnReturnCode'; // Maps to $RestartBehavior, default 'suppress'
+  isLocked: boolean; // Flag to indicate if the configuration is locked
 }
 
 
@@ -120,6 +122,7 @@ const WingetAppPage: React.FC = () => {
         requirementRuleNotes: null,
         installExperience: 'system',
         restartBehavior: 'suppress',
+        isLocked: false, // Initialize as unlocked
       };
       setStagedApps([...stagedApps, newStagedApp]);
     } else {
@@ -136,6 +139,28 @@ const WingetAppPage: React.FC = () => {
       return newApps;
     });
   };
+
+  // Function to toggle the lock state of a specific staged app
+  const handleToggleLock = (index: number) => {
+    setStagedApps((currentApps) => {
+      const newApps = [...currentApps];
+      if (index >= 0 && index < newApps.length) {
+        newApps[index] = { ...newApps[index], isLocked: !newApps[index].isLocked };
+      }
+      return newApps;
+    });
+  };
+
+  // Determine if the "Publish All" button should be enabled
+  const canPublishAll = stagedApps.length > 0 && stagedApps.every(app => app.isLocked);
+
+  // Placeholder function for the actual publish action
+  const handlePublishAll = () => {
+    console.log("Publishing all locked apps...", stagedApps.filter(app => app.isLocked));
+    // TODO: Implement API call to backend to trigger deployment
+    alert(`Publishing ${stagedApps.filter(app => app.isLocked).length} app(s)... (Implementation pending)`);
+  };
+
 
   return (
     <div className="p-6">
@@ -221,23 +246,38 @@ const WingetAppPage: React.FC = () => {
                   <p><span className="font-semibold">Version:</span> {stagedApp.version}</p>
                   <p><span className="font-semibold">Publisher:</span> {stagedApp.publisher || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
                   <p><span className="font-semibold">Description:</span> {stagedApp.description || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
-                  <p><span className="font-semibold">Install Cmd:</span> {stagedApp.installCommandLine || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
-                  <p><span className="font-semibold">Uninstall Cmd:</span> {stagedApp.uninstallCommandLine || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
+                  {/* Removed command line display from here, it's in the modal */}
                   <p><span className="font-semibold">Detection:</span> {stagedApp.detectionRuleNotes || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
+                  <p><span className="font-semibold">Locked:</span> {stagedApp.isLocked
+                    ? <span className="text-green-600 dark:text-green-400 font-bold">Yes</span>
+                    : <span className="text-red-600 dark:text-red-400 font-bold">No</span>}
+                  </p> {/* Display lock status */}
                   {/* Optional: Add a "Remove" button here later */}
                 </div>
               ))}
             </div>
           )}
 
-          {stagedApps.length > 0 && (
-             <button
-                onClick={() => setIsConfigModalOpen(true)}
-                className="w-full px-4 py-2 mt-4 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
-             >
-                Configure & Deploy Staged Apps ({stagedApps.length})
-             </button>
-          )}
+          {/* Buttons Section */}
+          <div className="mt-4 space-y-2">
+            {stagedApps.length > 0 && (
+              <button
+                  onClick={() => setIsConfigModalOpen(true)}
+                  className="w-full px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 dark:focus:ring-offset-gray-800"
+              >
+                  Configure Staged Apps ({stagedApps.length})
+              </button>
+            )}
+            {/* Publish All Button */}
+            <button
+              onClick={handlePublishAll}
+              disabled={!canPublishAll}
+              className="w-full px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 dark:focus:ring-offset-gray-800 disabled:bg-gray-400 dark:disabled:bg-gray-500 disabled:cursor-not-allowed"
+              title={!canPublishAll ? "All apps must be locked before publishing" : "Publish all locked apps to Intune"}
+            >
+              Publish All Locked Apps to Intune
+            </button>
+          </div>
         </div>
 
       </div>
@@ -247,6 +287,7 @@ const WingetAppPage: React.FC = () => {
         onClose={() => setIsConfigModalOpen(false)}
         appsToConfigure={stagedApps}
         onUpdateApp={handleUpdateStagedApp}
+        onToggleLock={handleToggleLock} // Pass the handler function
       />
     </div>
   );
