@@ -18,7 +18,18 @@ interface WingetApp {
   Name: string;
   Id: string;
   Version: string;
-  // Add other relevant fields from the API response if needed
+  // Add other relevant fields from the API response if needed, like 'Source'
+  Source?: string;
+}
+
+/**
+ * Interface representing the structure of the response object
+ * returned by the backend API's /winget-search endpoint.
+ */
+interface WingetSearchResponse {
+  status: string; // Indicates success or failure
+  results: WingetApp[]; // The array of application results
+  message?: string; // Optional message (e.g., "No results found")
 }
 
 const WingetAppPage: React.FC = () => {
@@ -58,10 +69,20 @@ const WingetAppPage: React.FC = () => {
         throw new Error(`API request failed with status ${response.status}`);
       }
 
-      const data: WingetApp[] = await response.json();
-      setSearchResults(data);
+      // Parse the JSON response, expecting the WingetSearchResponse structure
+      const responseData: WingetSearchResponse = await response.json();
+
+      // Check the status from the API response (optional but good practice)
+      if (responseData.status === 'success') {
+        // Extract the 'results' array and update the state
+        setSearchResults(responseData.results || []); // Use empty array if results is null/undefined
+      } else {
+        // Handle potential API-level errors indicated by the status
+        throw new Error(responseData.message || 'API returned non-success status');
+      }
+
     } catch (err) {
-      // Handle network errors or JSON parsing errors
+      // Handle network errors, JSON parsing errors, or API-level errors caught above
       console.error('Error fetching Winget apps:', err);
       setError(
         err instanceof Error ? err.message : 'An unknown error occurred during search.'
@@ -135,6 +156,8 @@ const WingetAppPage: React.FC = () => {
                     <p className="font-medium">{app.Name}</p>
                     <p className="text-sm text-gray-600">ID: {app.Id}</p>
                     <p className="text-sm text-gray-600">Version: {app.Version}</p>
+                    {/* Optionally display the source if available */}
+                    {app.Source && <p className="text-xs text-gray-500">Source: {app.Source}</p>}
                   </div>
                   {/* Add button appears on hover */}
                   <button
@@ -166,6 +189,8 @@ const WingetAppPage: React.FC = () => {
                   <p className="font-medium">{app.Name}</p>
                   <p className="text-sm text-gray-600">ID: {app.Id}</p>
                   <p className="text-sm text-gray-600">Version: {app.Version}</p>
+                  {/* Optionally display the source if available */}
+                  {app.Source && <p className="text-xs text-gray-500">Source: {app.Source}</p>}
                   {/* Optional: Add a "Remove" button here later */}
                 </div>
               ))}

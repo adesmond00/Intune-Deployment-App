@@ -18,9 +18,10 @@ Implementing the frontend functionality for searching and staging Winget applica
 *   **Fixed Backend API:**
     *   Modified the `/winget-search` endpoint in `api/api.py` to accept `GET` requests instead of `POST`, aligning with REST principles and resolving the `405 Method Not Allowed` error. Removed the unused `WingetSearch` Pydantic model from `api/winget.py`. Corrected a syntax error in `api/api.py` introduced during the previous modification.
     *   Added permissive CORS (Cross-Origin Resource Sharing) middleware to `api/api.py` to resolve frontend "failed to fetch" errors during local development. The configuration is defined in a new `api/middleware.py` file for modularity and includes warnings about needing stricter settings for production.
+*   **Fixed Frontend API Handling:** Updated `WingetAppPage.tsx` to correctly parse the nested `results` array from the `/winget-search` API response object, resolving the issue where search results were not displayed despite a successful API call. Added `WingetSearchResponse` interface for type safety.
 
 ## Next Steps (Project Development)
-With the Winget search UI functional and the backend API CORS configuration added, focus can shift to:
+With the Winget search UI displaying results correctly and the backend API CORS configuration added, focus can shift to:
 *   Implementing the actual deployment logic triggered by the "Deploy" button on the `WingetAppPage`. This involves:
     *   Creating a new backend API endpoint (or modifying `/execute-script`) to handle the deployment orchestration (packaging, uploading, creating Intune app).
     *   Connecting the frontend "Deploy" button to this new backend logic.

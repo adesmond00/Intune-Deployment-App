@@ -10,7 +10,7 @@
     *   An `ApplicationsPage` component (`Front-end/src/pages/ApplicationsPage.tsx`) with a welcome message and navigation links/buttons.
     *   A `WingetAppPage` component (`Front-end/src/pages/WingetAppPage.tsx`) providing:
         *   UI for searching Winget apps via the `/winget-search` API.
-        *   Display of search results.
+        *   Correct handling and display of search results (parsing the nested `results` array from the API response).
         *   Ability to "stage" apps into a separate list.
         *   Basic loading and error handling for the search.
         *   Placeholder "Deploy" button.
@@ -55,3 +55,4 @@
 *   Security vulnerabilities in the current `/execute-script` endpoint design.
 *   (Resolved) The `/winget-search` endpoint previously accepted POST instead of GET.
 *   (Resolved) Syntax error in `api/api.py` related to the `/winget-search` modification.
+*   (Resolved) Frontend failed to display search results due to incorrect parsing of the API response structure.
