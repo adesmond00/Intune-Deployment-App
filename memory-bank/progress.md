@@ -20,6 +20,7 @@
     *   `/`: Welcome message.
     *   `/winget-search`: Accepts a search term via `GET` request query parameter (`?term=...`) and uses `api/winget.py` to execute `winget search`, returning parsed results. (Method changed from POST to GET, syntax error fixed).
     *   `/execute-script`: Accepts a script path and parameters via `POST`, executes the specified PowerShell script using `subprocess.Popen`, and returns stdout/stderr. This is a generic executor.
+    *   **CORS Configuration**: Permissive CORS middleware added via `api/middleware.py` and applied in `api/api.py` to allow frontend requests during development (includes warnings for production).
 *   **Winget Search Logic**: The `api/winget.py` module successfully calls `winget search`, parses the output into a structured list of applications, and no longer contains the unused `WingetSearch` Pydantic model.
 *   **Intune Connection Script**: `scripts/Connect-to-Intune.ps1` provides a function to install necessary modules (`IntuneWin32App`, `Microsoft.Graph.Intune`) and connect to Intune using interactive authentication.
 *   **Add App Script**: `scripts/Add-App-to-Intune.ps1` provides a function that wraps `Add-IntuneWin32App`, accepting parameters needed to define a Win32 app in Intune (requires a pre-existing `.intunewin` file).
@@ -41,7 +42,10 @@
 *   **Integration**: The frontend Winget search is integrated with the backend `/winget-search` API. However, the deployment step (frontend "Deploy" button to backend orchestration) is not integrated.
 *   **`main.ps1`**: This file is empty and its purpose is undefined.
 *   **Error Handling**: No comprehensive error handling across the frontend-API-script layers.
-*   **Security**: API endpoint for script execution is insecure. Intune connection uses interactive auth, unsuitable for automation.
+*   **Security**:
+    *   API endpoint for script execution (`/execute-script`) is insecure.
+    *   Intune connection uses interactive auth, unsuitable for automation.
+    *   CORS configuration is currently permissive (`allow_origins=["*"]`) and needs restriction for production.
 *   **Asynchronous Operations**: No handling for potentially long-running packaging/upload tasks.
 *   **State Persistence**: Backend uses in-memory lists; needs persistent storage if required.
 *   **Configuration Management**: How settings like TenantID are managed is unclear (hardcoded ClientID in `Connect-to-Intune.ps1`, TenantID passed as param).

@@ -20,7 +20,8 @@ from typing import List, Optional
 import uvicorn
 import subprocess
 import json
-from winget import search_applications # Removed WingetSearch import as it's no longer needed for this endpoint
+from winget import search_applications
+from middleware import cors_middleware_config # Import the CORS config
 
 # Initialize FastAPI application with metadata
 app = FastAPI(
@@ -28,6 +29,11 @@ app = FastAPI(
     description="API for managing Intune deployments and configurations",
     version="1.0.0"
 )
+
+# Apply CORS middleware using the imported configuration
+# Note: The configuration dictionary includes the middleware class itself.
+app.add_middleware(**cors_middleware_config)
+
 
 # Data Models
 class Deployment(BaseModel):
