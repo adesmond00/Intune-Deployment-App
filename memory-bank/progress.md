@@ -10,15 +10,16 @@
     *   An `ApplicationsPage` component (`Front-end/src/pages/ApplicationsPage.tsx`) with a welcome message and navigation links/buttons.
     *   A `WingetAppPage` component (`Front-end/src/pages/WingetAppPage.tsx`) providing:
         *   UI for searching Winget apps via the `/winget-search` API.
-        *   Correct handling and display of search results (parsing the nested `results` array from the API response).
-        *   Ability to "stage" apps into a separate list, storing structured deployment info (`StagedAppDeploymentInfo` interface with fields like `displayName`, `id`, `version`, `publisher`, `description`, etc., initialized appropriately).
+        *   Correct handling and display of search results.
+        *   Ability to "stage" apps into a separate list, storing structured deployment info (`StagedAppDeploymentInfo` interface), including **auto-generated install/uninstall command lines**.
         *   Basic loading and error handling for the search.
         *   Button to open deployment configuration modal.
     *   A `DeploymentConfigModal` component (`Front-end/src/components/DeploymentConfigModal.tsx`) providing:
         *   Modal UI with side menu for selecting staged apps.
         *   Form area for configuring deployment parameters (`displayName`, `description`, `publisher`, `installExperience`, `restartBehavior`) for the selected app.
+        *   **Conditional display** (via `showCommandLines` flag, default `false`) of the auto-generated command lines.
         *   State management and callbacks (`onUpdateApp`) to update configuration in the parent page (`WingetAppPage`).
-        *   Placeholders for skipped configuration fields.
+        *   Placeholders for remaining skipped configuration fields (Detection/Requirement Rules).
     *   Functional navigation links in the sidebar and on the Applications page.
     *   Configuration file (`Front-end/src/config.ts`) for API base URL.
 *   **Backend API Foundation**: A FastAPI application (`api/`) is set up with basic endpoints:

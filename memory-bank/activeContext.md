@@ -22,16 +22,19 @@ Implementing the frontend functionality for searching and staging Winget applica
     *   Updated `WingetAppPage.tsx` to correctly parse the nested `results` array from the `/winget-search` API response object. Added `WingetSearchResponse` interface for type safety.
     *   Corrected property access in `WingetAppPage.tsx` (interface definition and JSX rendering) to use lowercase keys (`name`, `id`, `version`, `source`) matching the actual API response, resolving the issue where results were listed but data was not displayed.
 *   **Fixed Backend Parsing:** Improved the parsing logic in `api/winget.py` to reliably skip header and separator lines from the `winget search` output, preventing the header row from appearing as a result in the frontend.
-*   **Structured Staging Data:** Enhanced the `StagedAppDeploymentInfo` interface in `WingetAppPage.tsx` to include more fields relevant to the `Add-AppToIntune.ps1` script (`displayName`, `id`, `version`, `publisher`, `description`, command lines, rule notes, install experience, restart behavior), initializing most with `null` or defaults. Updated the `stagedApps` state, `handleAddApp` function, and display logic to use this enhanced interface.
+*   **Structured Staging Data & Command Line Generation:**
+    *   Enhanced the `StagedAppDeploymentInfo` interface in `WingetAppPage.tsx` to include fields relevant to the `Add-AppToIntune.ps1` script.
+    *   Updated the `handleAddApp` function in `WingetAppPage.tsx` to automatically generate default `installCommandLine` and `uninstallCommandLine` strings based on the app's `id` and `name` (using `Winget-InstallPackage.ps1`) and store them in the `StagedAppDeploymentInfo` object.
 *   **Added Deployment Configuration UI:**
     *   Created a new modal component `Front-end/src/components/DeploymentConfigModal.tsx`.
-    *   Implemented a two-pane layout within the modal (side menu for app selection, main area for configuration form).
-    *   Added form fields (inputs, selects) for editing `displayName`, `description`, `publisher`, `installExperience`, and `restartBehavior`. Included placeholders for skipped fields.
-    *   Implemented state management (`selectedIndex`) and event handling (`handleInputChange`, `onUpdateApp` prop) to allow editing configuration for the selected staged app.
-    *   Integrated the modal into `WingetAppPage.tsx`, controlling its visibility and passing necessary data and callbacks.
+    *   Implemented a two-pane layout (side menu, form area).
+    *   Added form fields for editing `displayName`, `description`, `publisher`, `installExperience`, `restartBehavior`.
+    *   Added a `showCommandLines` boolean flag (default `false`) within the modal to conditionally display the generated command lines (currently as read-only text areas). Updated comments to reflect skipped fields (Detection/Requirement Rules).
+    *   Implemented state management and event handling for editing configuration.
+    *   Integrated the modal into `WingetAppPage.tsx`.
 
 ## Next Steps (Project Development)
-With the deployment configuration modal implemented, focus can shift to:
+With the deployment configuration modal allowing editing of basic parameters and command lines generated, focus can shift to:
 *   Implementing the actual deployment logic triggered by the "Deploy" button on the `WingetAppPage`. This involves:
     *   Creating a new backend API endpoint (or modifying `/execute-script`) to handle the deployment orchestration (packaging, uploading, creating Intune app).
     *   Connecting the frontend "Deploy" button to this new backend logic.

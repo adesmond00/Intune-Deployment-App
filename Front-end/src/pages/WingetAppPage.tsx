@@ -122,8 +122,22 @@ const WingetAppPage: React.FC = () => {
   };
 
   /**
+   * Creates a safe filename string from an application name,
+   * suitable for use in log file names.
+   * Replaces spaces and common problematic characters.
+   * @param appName - The original application name.
+   * @returns A sanitized string suitable for a filename.
+   */
+  const createLogFileName = (appName: string): string => {
+    // Replace spaces with underscores, remove potentially problematic characters
+    // This is a basic sanitization, might need refinement based on actual needs
+    return appName.replace(/\s+/g, '_').replace(/[\\/*?:"<>|]/g, '');
+  };
+
+  /**
    * Adds a selected application to the staging area (right column).
    * Prevents duplicate entries based on the application ID.
+   * Generates default install/uninstall command lines.
    * @param appToAdd - The WingetApp object (from search results) to add to the staging list.
    */
   const handleAddApp = (appToAdd: WingetApp) => {
@@ -131,14 +145,19 @@ const WingetAppPage: React.FC = () => {
     if (!stagedApps.some((stagedApp) => stagedApp.id === appToAdd.id)) {
       // Create the StagedAppDeploymentInfo object, mapping data from WingetApp
       // and setting defaults or null for fields requiring user input later.
+      // Also generate the default command lines.
+      const logFileNameBase = createLogFileName(appToAdd.name);
+      const installCmd = `powershell.exe -executionpolicy bypass -file Winget-InstallPackage.ps1 -mode install -PackageID "${appToAdd.id}" -Log "${logFileNameBase}_install.log"`;
+      const uninstallCmd = `powershell.exe -executionpolicy bypass -file Winget-InstallPackage.ps1 -mode uninstall -PackageID "${appToAdd.id}" -Log "${logFileNameBase}_uninstall.log"`;
+
       const newStagedApp: StagedAppDeploymentInfo = {
         displayName: appToAdd.name,
         id: appToAdd.id,
         version: appToAdd.version,
         publisher: null, // Requires user input or later inference
         description: null, // Requires user input
-        installCommandLine: null, // Requires user input or smart default generation
-        uninstallCommandLine: null, // Requires user input or smart default generation
+        installCommandLine: installCmd, // Generated command
+        uninstallCommandLine: uninstallCmd, // Generated command
         detectionRuleNotes: null, // Placeholder
         requirementRuleNotes: null, // Placeholder
         installExperience: 'system', // Default

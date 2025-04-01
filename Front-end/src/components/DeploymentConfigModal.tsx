@@ -66,7 +66,11 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
   // Get the currently selected app, handle empty list case
   const currentApp = appsToConfigure.length > 0 ? appsToConfigure[selectedIndex] : null;
 
-  // --- Placeholder for Form Logic ---
+  // --- Constants ---
+  // Controls visibility of command line fields in the UI. Set to true for debugging/future use.
+  // WARNING: Do not commit with this set to true unless intended.
+  const showCommandLines = false;
+
   // --- Form Logic ---
 
   /**
@@ -215,14 +219,39 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     <p className="text-sm"><span className="font-semibold">Version:</span> {currentApp.version}</p>
                  </div>
 
+                 {/* Conditionally Render Command Lines */}
+                 {showCommandLines && (
+                    <>
+                      <div>
+                        <label htmlFor={`installCommandLine-${currentApp.id}`} className="block text-sm font-medium text-gray-700 mb-1">Install Command Line</label>
+                        <textarea
+                          readOnly // Initially read-only, maybe editable later
+                          id={`installCommandLine-${currentApp.id}`}
+                          rows={2}
+                          value={currentApp.installCommandLine || ''}
+                          className="w-full p-2 border border-gray-300 rounded shadow-sm bg-gray-100 font-mono text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor={`uninstallCommandLine-${currentApp.id}`} className="block text-sm font-medium text-gray-700 mb-1">Uninstall Command Line</label>
+                        <textarea
+                          readOnly // Initially read-only
+                          id={`uninstallCommandLine-${currentApp.id}`}
+                          rows={2}
+                          value={currentApp.uninstallCommandLine || ''}
+                          className="w-full p-2 border border-gray-300 rounded shadow-sm bg-gray-100 font-mono text-xs"
+                        />
+                      </div>
+                    </>
+                 )}
+
                 {/* --- Skipped Fields Placeholders --- */}
                 <div className="pt-4 border-t mt-4">
                     <p className="text-sm font-medium text-gray-500 mb-2">Configuration To Be Added Later:</p>
                     <ul className="list-disc list-inside text-sm text-gray-500 space-y-1">
-                        <li>Install Command Line</li>
-                        <li>Uninstall Command Line</li>
-                        <li>Detection Rules</li>
-                        <li>Requirement Rules</li>
+                        {/* Command lines are handled above (conditionally hidden) */}
+                        <li>Detection Rules (Structured Input)</li>
+                        <li>Requirement Rules (Structured Input)</li>
                     </ul>
                 </div>
                  {/* --- End Skipped Fields --- */}
