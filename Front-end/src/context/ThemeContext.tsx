@@ -54,11 +54,14 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     return 'light';
   });
 
-  // Effect to apply/remove the 'dark' class and update localStorage when theme changes
+  // Effect to apply/remove the 'dark' class on the <html> element and update localStorage
   useEffect(() => {
     const root = window.document.documentElement; // Get the <html> element
-    root.classList.remove(theme === 'light' ? 'dark' : 'light'); // Remove the opposite class
-    root.classList.add(theme); // Add the current theme class
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
     localStorage.setItem('theme', theme); // Persist the theme choice
   }, [theme]); // Re-run this effect whenever the theme state changes
 

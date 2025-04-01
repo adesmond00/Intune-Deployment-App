@@ -1,9 +1,10 @@
 # Active Context: Intune Deployment Toolkit
 
 ## Current Focus
-Completed frontend implementation for Intune Tenant connection UI, including debug mode features.
+Debugging and refining existing UI features, including dark mode.
 
 ## Recent Activity
+*   **Fixed Dark Mode Toggle:** Refined the `useEffect` hook in `Front-end/src/context/ThemeContext.tsx` to correctly add/remove the `dark` class on the `<html>` element, resolving the issue where the UI didn't visually update when the theme was toggled.
 *   **Implemented Tenant Connection UI:**
     *   Added `debugMode` flag to `Front-end/src/config.ts`.
     *   Created `TenantContext` (`Front-end/src/context/TenantContext.tsx`) for global state management of tenant connection status (isConnected, tenantId, clientId, tenantName) with localStorage persistence.
