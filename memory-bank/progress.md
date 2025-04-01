@@ -22,6 +22,10 @@
         *   Placeholders for remaining skipped configuration fields (Detection/Requirement Rules).
     *   Functional navigation links in the sidebar and on the Applications page.
     *   Configuration file (`Front-end/src/config.ts`) for API base URL.
+    *   **Dark Mode**: Implemented using TailwindCSS class strategy (`darkMode: 'class'`). Includes:
+        *   `ThemeContext` for global state management and `<html>` class toggling.
+        *   `SettingsModal` component with a functional theme toggle switch.
+        *   Basic dark mode styles applied to core layout, pages, and modals.
 *   **Backend API Foundation**: A FastAPI application (`api/`) is set up with basic endpoints:
     *   `/`: Welcome message.
     *   `/winget-search`: Accepts a search term via `GET` request query parameter (`?term=...`) and uses `api/winget.py` to execute `winget search`, returning parsed results. (Method changed from POST to GET, syntax error fixed).

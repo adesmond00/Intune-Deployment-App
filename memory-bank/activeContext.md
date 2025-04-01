@@ -32,9 +32,16 @@ Implementing the frontend functionality for searching and staging Winget applica
     *   Added a `showCommandLines` boolean flag (default `false`) within the modal to conditionally display the generated command lines (currently as read-only text areas). Updated comments to reflect skipped fields (Detection/Requirement Rules).
     *   Implemented state management and event handling for editing configuration.
     *   Integrated the modal into `WingetAppPage.tsx`.
+*   **Implemented Dark Mode Foundation:**
+    *   Enabled class-based dark mode in `tailwind.config.js`.
+    *   Created `ThemeContext.tsx` to manage global theme state ('light'/'dark'), persist to localStorage, and apply/remove the `dark` class on the `<html>` element.
+    *   Wrapped the application in `ThemeProvider` within `App.tsx`.
+    *   Created `SettingsModal.tsx` with a toggle switch using `ThemeContext` to change the theme.
+    *   Integrated `SettingsModal` into `App.tsx`, triggered via a new `onSettingsClick` prop added to `Sidebar.tsx`.
+    *   Applied initial dark mode styles (`dark:` variants) to core layout components (`App.tsx`, `Header`, `Sidebar.tsx`) and pages (`DashboardPage`, `ApplicationsPage`, `WingetAppPage`, `DeploymentConfigModal`).
 
 ## Next Steps (Project Development)
-With the deployment configuration modal allowing editing of basic parameters and command lines generated, focus can shift to:
+With the dark mode toggle functional and basic styling applied, focus can shift to:
 *   Implementing the actual deployment logic triggered by the "Deploy" button on the `WingetAppPage`. This involves:
     *   Creating a new backend API endpoint (or modifying `/execute-script`) to handle the deployment orchestration (packaging, uploading, creating Intune app).
     *   Connecting the frontend "Deploy" button to this new backend logic.
