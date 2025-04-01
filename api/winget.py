@@ -75,10 +75,25 @@ def search_applications(search_term: str) -> Dict:
                     "results": [],
                     "message": "No results found"
                 }
-            
-            # Skip the header line and parse results
+
+            # Find the index of the separator line ("---")
+            separator_index = -1
+            for i, line in enumerate(lines):
+                if line.strip().startswith('---'):
+                    separator_index = i
+                    break
+
+            # If separator not found, something is wrong with the output
+            if separator_index == -1:
+                 return {
+                    "status": "success", # Or potentially an error status
+                    "results": [],
+                    "message": "Could not parse winget output (separator not found)"
+                }
+
+            # Parse results starting from the line *after* the separator
             results: List[WingetResult] = []
-            for line in lines[1:]:  # Skip the header line
+            for line in lines[separator_index + 1:]:
                 # Split by multiple spaces and filter out empty strings
                 parts = [part for part in line.split('  ') if part.strip()]
                 if len(parts) >= 3:  # Ensure we have at least name, id, and version
