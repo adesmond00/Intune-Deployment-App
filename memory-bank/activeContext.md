@@ -1,9 +1,15 @@
 # Active Context: Intune Deployment Toolkit
 
 ## Current Focus
-Debugging and refining existing UI features, including dark mode.
+Refining UI for staged app display and configuration.
 
 ## Recent Activity
+*   **Adjusted Command Line Display:**
+    *   Modified `Front-end/src/pages/WingetAppPage.tsx` to display the generated `installCommandLine` and `uninstallCommandLine` directly in the "Apps to Deploy" list for each staged app.
+    *   Modified `Front-end/src/components/DeploymentConfigModal.tsx` to:
+        *   Remove the hardcoded `showCommandLines` flag.
+        *   Add a new state variable and toggle switch for "Show Advanced Settings".
+        *   Conditionally display the `installCommandLine` and `uninstallCommandLine` text areas only when the "Show Advanced Settings" toggle is enabled.
 *   **Fixed Tenant Connection Modal Visibility:** Increased the `z-index` of the main container in `Front-end/src/components/TenantConnectionModal.tsx` from `z-40` to `z-60` to ensure it renders above the `SettingsModal` backdrop and content.
 *   **Fixed Dark Mode Toggle:** Refined the `useEffect` hook in `Front-end/src/context/ThemeContext.tsx` to correctly add/remove the `dark` class on the `<html>` element, resolving the issue where the UI didn't visually update when the theme was toggled.
 *   **Implemented Tenant Connection UI:**

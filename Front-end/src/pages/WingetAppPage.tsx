@@ -246,8 +246,10 @@ const WingetAppPage: React.FC = () => {
                   <p><span className="font-semibold">Version:</span> {stagedApp.version}</p>
                   <p><span className="font-semibold">Publisher:</span> {stagedApp.publisher || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
                   <p><span className="font-semibold">Description:</span> {stagedApp.description || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
-                  {/* Removed command line display from here, it's in the modal */}
-                  <p><span className="font-semibold">Detection:</span> {stagedApp.detectionRuleNotes || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
+                  {/* Display Command Lines */}
+                  <p className="mt-1"><span className="font-semibold">Install Cmd:</span> <code className="text-xs font-mono bg-gray-200 dark:bg-gray-600 px-1 rounded">{stagedApp.installCommandLine || 'N/A'}</code></p>
+                  <p><span className="font-semibold">Uninstall Cmd:</span> <code className="text-xs font-mono bg-gray-200 dark:bg-gray-600 px-1 rounded">{stagedApp.uninstallCommandLine || 'N/A'}</code></p>
+                  <p className="mt-1"><span className="font-semibold">Detection:</span> {stagedApp.detectionRuleNotes || <span className="italic text-gray-500 dark:text-gray-400">(Not set)</span>}</p>
                   <p><span className="font-semibold">Locked:</span> {stagedApp.isLocked
                     ? <span className="text-green-600 dark:text-green-400 font-bold">Yes</span>
                     : <span className="text-red-600 dark:text-red-400 font-bold">No</span>}

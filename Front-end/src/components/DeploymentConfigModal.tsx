@@ -29,6 +29,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
   onToggleLock, // Destructure the new prop
 }) => {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState<boolean>(false); // State for advanced settings toggle
 
   // Get the lock status of the currently selected app
   const isCurrentAppLocked = appsToConfigure[selectedIndex]?.isLocked ?? false;
@@ -50,9 +51,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
 
   const currentApp = appsToConfigure.length > 0 ? appsToConfigure[selectedIndex] : null;
 
-  // Controls visibility of command line fields in the UI. Set to true for debugging/future use.
-  // WARNING: Do not commit with this set to true unless intended.
-  const showCommandLines = false;
+  // Removed hardcoded showCommandLines flag
 
   const handleInputChange = (
     field: keyof StagedAppDeploymentInfo,
@@ -200,30 +199,51 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     <p className="text-sm"><span className="font-semibold">Version:</span> {currentApp.version}</p>
                  </div>
 
-                 {/* Conditionally Render Command Lines */}
-                 {showCommandLines && (
-                    <>
+                 {/* --- Advanced Settings Toggle --- */}
+                 <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Show Advanced Settings</span>
+                        {/* Basic Toggle Switch Styling */}
+                        <button
+                          type="button" // Prevent form submission
+                          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                          className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${showAdvancedSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                          aria-checked={showAdvancedSettings}
+                          role="switch"
+                          disabled={isCurrentAppLocked} // Disable if locked
+                        >
+                          <div
+                            className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${showAdvancedSettings ? 'translate-x-5' : ''}`}
+                          ></div>
+                        </button>
+                    </div>
+                 </div>
+
+                 {/* Conditionally Render Advanced Settings (Command Lines) */}
+                 {showAdvancedSettings && (
+                    <div className="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 space-y-4">
+                      <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Command Lines (Read-Only)</h5>
                       <div>
-                        <label htmlFor={`installCommandLine-${currentApp.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Install Command Line</label>
+                        <label htmlFor={`installCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Install Command Line</label>
                         <textarea
                           readOnly
                           id={`installCommandLine-${currentApp.id}`}
                           rows={2}
                           value={currentApp.installCommandLine || ''}
-                          className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm bg-gray-100 dark:bg-gray-700 font-mono text-xs text-gray-700 dark:text-gray-300"
+                          className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
                         />
                       </div>
                       <div>
-                        <label htmlFor={`uninstallCommandLine-${currentApp.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Uninstall Command Line</label>
+                        <label htmlFor={`uninstallCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Uninstall Command Line</label>
                         <textarea
                           readOnly
                           id={`uninstallCommandLine-${currentApp.id}`}
                           rows={2}
                           value={currentApp.uninstallCommandLine || ''}
-                          className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded shadow-sm bg-gray-100 dark:bg-gray-700 font-mono text-xs text-gray-700 dark:text-gray-300"
+                          className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
                         />
                       </div>
-                    </>
+                    </div>
                  )}
 
                 {/* --- Skipped Fields Placeholders - Added dark mode text color --- */}
