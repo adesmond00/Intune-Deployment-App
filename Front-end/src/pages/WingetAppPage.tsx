@@ -33,13 +33,24 @@ interface WingetSearchResponse {
   message?: string; // Optional message (e.g., "No results found")
 }
 
+/**
+ * Interface representing the structured information needed for a staged deployment.
+ * This will be expanded later with more deployment-specific parameters.
+ */
+interface StagedAppDeploymentInfo {
+  displayName: string; // The name to be used for the app in Intune
+  id: string;          // The Winget ID, used for potential installation commands
+  // Add other deployment-specific fields here later (e.g., install command, detection rules)
+}
+
+
 const WingetAppPage: React.FC = () => {
   // State for the search term entered by the user
   const [searchTerm, setSearchTerm] = useState<string>('');
   // State to store the applications returned from the Winget search API
   const [searchResults, setSearchResults] = useState<WingetApp[]>([]);
-  // State to store the applications selected by the user for staging
-  const [stagedApps, setStagedApps] = useState<WingetApp[]>([]);
+  // State to store the structured deployment info for apps selected by the user for staging
+  const [stagedApps, setStagedApps] = useState<StagedAppDeploymentInfo[]>([]); // Changed type
   // State to indicate if a search request is currently in progress
   const [isLoading, setIsLoading] = useState<boolean>(false);
   // State to store any error message during the API call
@@ -97,12 +108,19 @@ const WingetAppPage: React.FC = () => {
   /**
    * Adds a selected application to the staging area (right column).
    * Prevents duplicate entries based on the application ID.
-   * @param appToAdd - The WingetApp object to add to the staging list.
+   * @param appToAdd - The WingetApp object (from search results) to add to the staging list.
    */
   const handleAddApp = (appToAdd: WingetApp) => {
-    // Check if the app (by ID) is already in the stagedApps list using lowercase 'id'
-    if (!stagedApps.some((app) => app.id === appToAdd.id)) {
-      setStagedApps([...stagedApps, appToAdd]);
+    // Check if an app with the same ID is already in the stagedApps list
+    if (!stagedApps.some((stagedApp) => stagedApp.id === appToAdd.id)) {
+      // Create the StagedAppDeploymentInfo object from the WingetApp data
+      const newStagedApp: StagedAppDeploymentInfo = {
+        displayName: appToAdd.name, // Use the name from search results as the initial display name
+        id: appToAdd.id,
+        // Initialize other deployment fields here if they were added to the interface
+      };
+      // Add the structured deployment info to the state
+      setStagedApps([...stagedApps, newStagedApp]);
     } else {
       // Optional: Provide feedback that the app is already staged using lowercase 'name'
       console.log(`App "${appToAdd.name}" is already staged.`);
@@ -186,14 +204,13 @@ const WingetAppPage: React.FC = () => {
             <p className="text-gray-500 italic">No apps added yet. Use the search results to add apps here.</p>
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto mb-4">
-              {stagedApps.map((app) => (
-                <div key={app.id} className="p-3 border rounded bg-gray-50"> {/* Use lowercase id for key */}
-                  {/* Access properties using lowercase keys */}
-                  <p className="font-medium">{app.name}</p>
-                  <p className="text-sm text-gray-600">ID: {app.id}</p>
-                  <p className="text-sm text-gray-600">Version: {app.version}</p>
-                  {/* Optionally display the source if available */}
-                  {app.source && <p className="text-xs text-gray-500">Source: {app.source}</p>}
+              {/* Map over the stagedApps array containing StagedAppDeploymentInfo objects */}
+              {stagedApps.map((stagedApp) => (
+                <div key={stagedApp.id} className="p-3 border rounded bg-gray-50">
+                  {/* Access properties from the StagedAppDeploymentInfo object */}
+                  <p className="font-medium">{stagedApp.displayName}</p>
+                  <p className="text-sm text-gray-600">ID: {stagedApp.id}</p>
+                  {/* Note: Version and Source are not part of StagedAppDeploymentInfo currently */}
                   {/* Optional: Add a "Remove" button here later */}
                 </div>
               ))}
