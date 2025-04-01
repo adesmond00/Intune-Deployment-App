@@ -13,7 +13,12 @@
         *   Correct handling and display of search results (parsing the nested `results` array from the API response).
         *   Ability to "stage" apps into a separate list, storing structured deployment info (`StagedAppDeploymentInfo` interface with fields like `displayName`, `id`, `version`, `publisher`, `description`, etc., initialized appropriately).
         *   Basic loading and error handling for the search.
-        *   Placeholder "Deploy" button.
+        *   Button to open deployment configuration modal.
+    *   A `DeploymentConfigModal` component (`Front-end/src/components/DeploymentConfigModal.tsx`) providing:
+        *   Modal UI with side menu for selecting staged apps.
+        *   Form area for configuring deployment parameters (`displayName`, `description`, `publisher`, `installExperience`, `restartBehavior`) for the selected app.
+        *   State management and callbacks (`onUpdateApp`) to update configuration in the parent page (`WingetAppPage`).
+        *   Placeholders for skipped configuration fields.
     *   Functional navigation links in the sidebar and on the Applications page.
     *   Configuration file (`Front-end/src/config.ts`) for API base URL.
 *   **Backend API Foundation**: A FastAPI application (`api/`) is set up with basic endpoints:
@@ -33,7 +38,8 @@
 ## What's Missing / Incomplete / Needs Work
 
 *   **Frontend Functionality**:
-    *   The Winget search/staging UI (`WingetAppPage`) is functional but the "Deploy" button is a placeholder.
+    *   The Winget search/staging UI (`WingetAppPage`) allows searching, staging, and opening the configuration modal.
+    *   The configuration modal (`DeploymentConfigModal`) allows editing basic deployment parameters, but the final "Confirm Configuration" button is a placeholder (doesn't trigger deployment).
     *   The "Add an App with Scoop" button on `ApplicationsPage` is not wired up.
     *   No components exist for adding/configuring custom MSI/EXE applications.
     *   No UI exists for displaying deployment status/feedback beyond basic search errors.

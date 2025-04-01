@@ -9,6 +9,7 @@
  */
 import React, { useState } from 'react';
 import { API_BASE_URL } from '../config'; // Import the configurable API base URL
+import DeploymentConfigModal from '../components/DeploymentConfigModal'; // Import the modal component
 
 /**
  * Interface representing the structure of a Winget application object
@@ -67,6 +68,9 @@ const WingetAppPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   // State to store any error message during the API call
   const [error, setError] = useState<string | null>(null);
+  // State to control the visibility of the deployment configuration modal
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState<boolean>(false);
+
 
   /**
    * Handles the Winget application search.
@@ -147,6 +151,23 @@ const WingetAppPage: React.FC = () => {
       console.log(`App "${appToAdd.name}" is already staged.`);
     }
   };
+
+  /**
+   * Callback function passed to the modal to update the staged app data
+   * in this component's state when the user makes changes in the modal form.
+   * @param index - The index of the app being updated in the stagedApps array.
+   * @param updatedApp - The modified StagedAppDeploymentInfo object.
+   */
+  const handleUpdateStagedApp = (index: number, updatedApp: StagedAppDeploymentInfo) => {
+    setStagedApps((currentApps) => {
+      const newApps = [...currentApps]; // Create a mutable copy
+      if (index >= 0 && index < newApps.length) {
+        newApps[index] = updatedApp; // Update the specific app at the index
+      }
+      return newApps; // Return the new array to update state
+    });
+  };
+
 
   return (
     <div className="p-6">
@@ -247,16 +268,24 @@ const WingetAppPage: React.FC = () => {
           {/* Placeholder Deploy Button */}
           {stagedApps.length > 0 && (
              <button
-                // onClick={handleDeploy} // Placeholder for future deploy function
-                disabled // Disabled for now
-                className="w-full px-4 py-2 mt-4 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:bg-gray-400"
+                onClick={() => setIsConfigModalOpen(true)} // Open the modal on click
+                // disabled={stagedApps.length === 0} // Enable button only if apps are staged
+                className="w-full px-4 py-2 mt-4 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
              >
-                Deploy Staged Apps (Placeholder)
+                Configure & Deploy Staged Apps ({stagedApps.length})
              </button>
           )}
         </div>
 
       </div>
+
+      {/* Render the Deployment Configuration Modal */}
+      <DeploymentConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+        appsToConfigure={stagedApps}
+        onUpdateApp={handleUpdateStagedApp}
+      />
     </div>
   );
 };
