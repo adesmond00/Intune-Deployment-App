@@ -8,16 +8,17 @@ Implementing the frontend functionality for searching and staging Winget applica
 *   Created the `WingetAppPage` component (`Front-end/src/pages/WingetAppPage.tsx`) with:
     *   Two-column layout (Search/Results and Staging).
     *   State management for search term, results, staged apps, loading, and errors.
-    *   Functionality to call the `/winget-search` backend API endpoint using the configured base URL.
+    *   Functionality to call the `/winget-search` backend API endpoint (using GET) via the configured base URL.
     *   UI to display search results with an "Add" button (visible on hover).
     *   Functionality to add selected apps to a "Staged Apps" list, preventing duplicates.
     *   Placeholder "Deploy" button for staged apps.
     *   Added comments and basic error handling.
 *   Added a new route `/applications/winget` in `Front-end/src/App.tsx` pointing to `WingetAppPage`.
 *   Updated the "Add an App with Winget" button in `Front-end/src/pages/ApplicationsPage.tsx` to be a `Link` component navigating to the new `/applications/winget` route.
+*   **Fixed Backend API:** Modified the `/winget-search` endpoint in `api/api.py` to accept `GET` requests instead of `POST`, aligning with REST principles and resolving the `405 Method Not Allowed` error reported by the user. Removed the unused `WingetSearch` Pydantic model from `api/winget.py`.
 
 ## Next Steps (Project Development)
-With the basic Winget search and staging UI in place, focus can shift to:
+With the Winget search UI functional and the backend API corrected, focus can shift to:
 *   Implementing the actual deployment logic triggered by the "Deploy" button on the `WingetAppPage`. This involves:
     *   Creating a new backend API endpoint (or modifying `/execute-script`) to handle the deployment orchestration (packaging, uploading, creating Intune app).
     *   Connecting the frontend "Deploy" button to this new backend logic.

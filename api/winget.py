@@ -12,14 +12,7 @@ import subprocess
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 
-class WingetSearch(BaseModel):
-    """
-    Represents a winget search request.
-    
-    Attributes:
-        search_term (str): The term to search for in the winget repository
-    """
-    search_term: str
+# Removed unused WingetSearch model
 
 class WingetResult(BaseModel):
     """
@@ -104,4 +97,4 @@ def search_applications(search_term: str) -> Dict:
             raise Exception(f"Winget search failed: {stderr}")
             
     except Exception as e:
-        raise Exception(f"Error performing winget search: {str(e)}") 
+        raise Exception(f"Error performing winget search: {str(e)}")

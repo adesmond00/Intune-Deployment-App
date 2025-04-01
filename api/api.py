@@ -20,7 +20,7 @@ from typing import List, Optional
 import uvicorn
 import subprocess
 import json
-from winget import WingetSearch, search_applications
+from winget import search_applications # Removed WingetSearch import as it's no longer needed for this endpoint
 
 # Initialize FastAPI application with metadata
 app = FastAPI(
@@ -71,20 +71,29 @@ async def root():
     """
     return {"message": "Welcome to the Intune Deployment Toolkit API"}
 
-@app.post("/winget-search")
-async def winget_search(search: WingetSearch):
+@app.get("/winget-search") # Changed from @app.post to @app.get
+async def winget_search(term: str): # Changed input from Pydantic model to query parameter 'term'
     """
-    Search for applications using winget.
+    Search for applications using winget via a GET request.
     
-    This endpoint executes a winget search command and returns the results
-    in a structured format. It handles various edge cases and provides
-    proper error handling.
+    This endpoint executes a winget search command based on the provided query parameter
+    and returns the results in a structured format. It handles various edge cases
+    and provides proper error handling.
     
     Args:
-        search (WingetSearch): The search request containing the search term
+        term (str): The search term provided as a query parameter (e.g., /winget-search?term=Chrome)
         
     Returns:
-        dict: A dictionary containing:
+        list: A list of found applications with their details (directly returns the result from search_applications)
+            
+    Raises:
+        HTTPException: If the winget command fails or encounters an error
+    """
+    try:
+        # Pass the query parameter 'term' directly to the search function
+        return search_applications(term)
+    except Exception as e:
+        raise HTTPException(
             - status: Success/failure status
             - results: List of found applications with their details
             - message: Optional message (e.g., "No results found")
