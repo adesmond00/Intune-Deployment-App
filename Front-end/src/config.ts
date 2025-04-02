@@ -14,3 +14,7 @@ export const API_BASE_URL = 'http://localhost:8000';
 export const debugMode = true;
 
 // Add other frontend configuration constants here as needed.
+
+// Other configuration constants can be added here
+export const APP_NAME = 'Intune Deployment Toolkit';
+export const APP_VERSION = '1.0.0';

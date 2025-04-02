@@ -1,15 +1,16 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
+import { authService } from '../services/authService';
 
 interface TenantState {
   isConnected: boolean;
   tenantId: string | null;
-  clientId: string | null;
-  tenantName: string | null; // Display name (can be Tenant ID or a mock name)
+  tenantName: string | null;
+  error: string | null;
 }
 
 interface TenantContextProps extends TenantState {
-  connect: (clientId: string, tenantId: string) => void;
-  disconnect: () => void;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
   mockConnect: (mockTenantName: string) => void;
   mockDisconnect: () => void;
 }
@@ -19,8 +20,8 @@ const TenantContext = createContext<TenantContextProps | undefined>(undefined);
 const initialState: TenantState = {
   isConnected: false,
   tenantId: null,
-  clientId: null,
   tenantName: null,
+  error: null,
 };
 
 export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -33,39 +34,73 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     localStorage.setItem('tenantConnection', JSON.stringify(tenantState));
   }, [tenantState]);
 
-  const connect = (clientId: string, tenantId: string) => {
-    // In a real scenario, this would likely involve an API call to validate
-    // For now, just update the frontend state and use Tenant ID as name
-    setTenantState({
-      isConnected: true,
-      tenantId: tenantId,
-      clientId: clientId,
-      tenantName: tenantId, // Use Tenant ID as name for now
-    });
+  const connect = async () => {
+    try {
+      setTenantState(prev => ({ ...prev, error: null }));
+      const result = await authService.login();
+      
+      if (result.success && result.tenantId) {
+        setTenantState({
+          isConnected: true,
+          tenantId: result.tenantId,
+          tenantName: result.tenantId, // You could fetch a more friendly name if needed
+          error: null,
+        });
+      } else {
+        setTenantState(prev => ({
+          ...prev,
+          error: result.error || 'Failed to connect to tenant'
+        }));
+        throw new Error(result.error || 'Failed to connect to tenant');
+      }
+    } catch (error) {
+      console.error('Failed to connect:', error);
+      setTenantState(prev => ({
+        ...prev,
+        error: error instanceof Error ? error.message : 'Failed to connect to tenant'
+      }));
+      throw error;
+    }
   };
 
-  const disconnect = () => {
-    // Add API call here if needed for backend logout/cleanup
-    setTenantState(initialState);
+  const disconnect = async () => {
+    try {
+      setTenantState(prev => ({ ...prev, error: null }));
+      const result = await authService.logout();
+      
+      if (result.success) {
+        setTenantState(initialState);
+      } else {
+        setTenantState(prev => ({
+          ...prev,
+          error: result.error || 'Failed to disconnect from tenant'
+        }));
+        throw new Error(result.error || 'Failed to disconnect from tenant');
+      }
+    } catch (error) {
+      console.error('Failed to disconnect:', error);
+      setTenantState(prev => ({
+        ...prev,
+        error: error instanceof Error ? error.message : 'Failed to disconnect from tenant'
+      }));
+      throw error;
+    }
   };
 
   const mockConnect = (mockTenantName: string) => {
     setTenantState({
       isConnected: true,
       tenantId: 'mock-tenant-id',
-      clientId: 'mock-client-id',
       tenantName: mockTenantName,
+      error: null,
     });
   };
 
   const mockDisconnect = () => {
-    // If the current connection is a mock one, disconnect.
-    // This prevents accidentally disconnecting a real connection via the mock toggle.
     if (tenantState.tenantId === 'mock-tenant-id') {
       setTenantState(initialState);
     }
   };
-
 
   return (
     <TenantContext.Provider value={{ ...tenantState, connect, disconnect, mockConnect, mockDisconnect }}>

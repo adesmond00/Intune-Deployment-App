@@ -1,15 +1,14 @@
 # Connects to Intune using the Microsoft Graph API
-# Installs the IntuneWin32App and Microsoft.Graph.Intune modules
-
+# Returns JSON result for the frontend application
 
 function Initialize-IntuneConnection {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $false)]
         [string]$TenantID,
         
         [Parameter(Mandatory = $false)]
-        [string]$ClientID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+        [string]$ClientID
     )
 
     try {
@@ -26,8 +25,6 @@ function Initialize-IntuneConnection {
             if (-not $moduleInstalled) {
                 Write-Verbose "Installing module: $module"
                 Install-Module -Name $module -Force
-            } else {
-                Write-Verbose "Module $module is already installed"
             }
         }
 
@@ -37,22 +34,35 @@ function Initialize-IntuneConnection {
         Import-Module -Name "Microsoft.Graph.Intune"
 
         # Connect to Microsoft Graph
-        Write-Verbose "Connecting to Microsoft Graph with TenantID: $TenantID"
-        Connect-MSIntuneGraph -TenantID $TenantID -ClientID $ClientID -Interactive
+        Write-Verbose "Connecting to Microsoft Graph"
+        if ($TenantID) {
+            Connect-MSIntuneGraph -TenantID $TenantID -ClientID $ClientID -Interactive
+        } else {
+            Connect-MSIntuneGraph -Interactive
+        }
 
-        return @{
+        # Get current context
+        $context = Get-AzContext
+        $tenantId = $context.Tenant.Id
+
+        # Return success result as JSON
+        @{
             Success = $true
             Message = "Successfully connected to Microsoft Graph"
-        }
+            TenantID = $tenantId
+        } | ConvertTo-Json
     }
     catch {
         Write-Error "Failed to initialize Intune connection: $_"
-        return @{
+        @{
             Success = $false
             Error = $_.Exception.Message
-        }
+        } | ConvertTo-Json
     }
 }
+
+# Execute the connection
+Initialize-IntuneConnection
 
 # Example usage:
 <#
