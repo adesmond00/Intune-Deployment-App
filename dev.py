@@ -13,6 +13,8 @@ import sys
 import subprocess
 import time
 import webbrowser
+import signal
+import platform
 from pathlib import Path
 
 def run_command(command, cwd=None, shell=False):
@@ -30,7 +32,7 @@ def run_command(command, cwd=None, shell=False):
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {' '.join(command) if isinstance(command, list) else command}")
         print(f"Error: {e.stderr}")
-        sys.exit(1)
+        raise
 
 def check_python_version():
     """Check if Python version meets requirements."""
@@ -43,11 +45,15 @@ def check_python_version():
 
 def install_frontend_dependencies():
     """Install frontend dependencies using npm."""
-    print("\nInstalling frontend dependencies...")
     frontend_dir = Path("Front-end")
+    if not frontend_dir.exists():
+        print("Error: Front-end directory not found")
+        sys.exit(1)
+
+    print("\nInstalling frontend dependencies...")
+    node_modules = frontend_dir / "node_modules"
     
-    # Check if node_modules exists
-    if not (frontend_dir / "node_modules").exists():
+    if not node_modules.exists():
         print("Installing npm dependencies...")
         run_command(["npm", "install"], cwd=frontend_dir)
     else:
@@ -56,46 +62,45 @@ def install_frontend_dependencies():
 def install_backend_dependencies():
     """Install backend dependencies using pip."""
     print("\nInstalling backend dependencies...")
-    api_dir = Path("api")
+    requirements_file = Path("api/requirements.txt")
     
-    # Check if requirements.txt exists
-    if (api_dir / "requirements.txt").exists():
-        print("Installing Python dependencies...")
-        run_command([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], cwd=api_dir)
-    else:
-        print("No requirements.txt found in api directory")
+    if not requirements_file.exists():
+        print("Error: requirements.txt not found in api directory")
+        sys.exit(1)
+
+    print("Installing Python dependencies...")
+    run_command([sys.executable, "-m", "pip", "install", "-r", str(requirements_file)])
 
 def start_development_servers():
     """Start both frontend and backend servers in development mode."""
     print("\nStarting development servers...")
     
+    # Get absolute paths
+    frontend_dir = Path("Front-end").resolve()
+    api_dir = Path("api").resolve()
+    
     # Start backend server
-    api_dir = Path("api")
     backend_process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "api:app", "--reload", "--port", "8000"],
-        cwd=api_dir
+        [sys.executable, "-m", "uvicorn", "api:app", "--reload"],
+        cwd=api_dir,
+        creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
     )
     
-    # Wait a moment for backend to start
+    # Wait for backend to start
     time.sleep(2)
     
     # Start frontend server
-    frontend_dir = Path("Front-end")
     frontend_process = subprocess.Popen(
         ["npm", "run", "dev"],
-        cwd=frontend_dir
+        cwd=frontend_dir,
+        creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
     )
     
-    # Wait a moment for frontend to start
-    time.sleep(2)
+    # Wait for frontend to start
+    time.sleep(5)
     
     # Open the application in the default browser
     webbrowser.open("http://localhost:5173")
-    
-    print("\nDevelopment servers started!")
-    print("Frontend: http://localhost:5173")
-    print("Backend: http://localhost:8000")
-    print("\nPress Ctrl+C to stop the servers")
     
     try:
         # Wait for both processes
@@ -105,21 +110,27 @@ def start_development_servers():
         print("\nShutting down servers...")
         backend_process.terminate()
         frontend_process.terminate()
+        backend_process.wait()
+        frontend_process.wait()
         print("Servers stopped")
 
 def main():
     """Main entry point for the development setup script."""
     print("Setting up Intune Deployment Toolkit development environment...")
     
-    # Check Python version
-    check_python_version()
-    
-    # Install dependencies
-    install_frontend_dependencies()
-    install_backend_dependencies()
-    
-    # Start development servers
-    start_development_servers()
+    try:
+        # Check Python version
+        check_python_version()
+        
+        # Install dependencies
+        install_frontend_dependencies()
+        install_backend_dependencies()
+        
+        # Start development servers
+        start_development_servers()
+    except Exception as e:
+        print(f"\nError: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 
