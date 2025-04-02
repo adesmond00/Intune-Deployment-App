@@ -17,6 +17,28 @@ import signal
 import platform
 from pathlib import Path
 
+def verify_directory_structure():
+    """Verify that all required directories and files exist."""
+    required_paths = {
+        "Front-end": "Frontend directory",
+        "Front-end/package.json": "Frontend package.json",
+        "api": "API directory",
+        "api/api.py": "Main API file",
+        "api/requirements.txt": "Python requirements file"
+    }
+    
+    missing_paths = []
+    for path, description in required_paths.items():
+        if not Path(path).exists():
+            missing_paths.append(f"{description} ({path})")
+    
+    if missing_paths:
+        print("\nError: Missing required files or directories:")
+        for path in missing_paths:
+            print(f"  - {path}")
+        print("\nPlease ensure you're running this script from the project root directory.")
+        sys.exit(1)
+
 def run_command(command, cwd=None, shell=False):
     """Run a command and return its output."""
     try:
@@ -33,6 +55,10 @@ def run_command(command, cwd=None, shell=False):
         print(f"Error running command: {' '.join(command) if isinstance(command, list) else command}")
         print(f"Error: {e.stderr}")
         raise
+    except FileNotFoundError as e:
+        print(f"Error: Command not found. Please ensure the required tools are installed and in your PATH.")
+        print(f"Details: {str(e)}")
+        raise
 
 def check_python_version():
     """Check if Python version meets requirements."""
@@ -41,6 +67,15 @@ def check_python_version():
     if current_version < required_version:
         print(f"Error: Python {required_version[0]}.{required_version[1]} or higher is required")
         print(f"Current version: {current_version[0]}.{current_version[1]}")
+        sys.exit(1)
+
+def check_node_version():
+    """Check if Node.js is installed and meets requirements."""
+    try:
+        version = run_command(["node", "--version"])
+        print(f"Node.js version: {version.strip()}")
+    except FileNotFoundError:
+        print("Error: Node.js is not installed. Please install Node.js and try again.")
         sys.exit(1)
 
 def install_frontend_dependencies():
@@ -79,22 +114,39 @@ def start_development_servers():
     frontend_dir = Path("Front-end").resolve()
     api_dir = Path("api").resolve()
     
+    # Verify paths exist
+    if not frontend_dir.exists():
+        print(f"Error: Frontend directory not found at {frontend_dir}")
+        sys.exit(1)
+    if not api_dir.exists():
+        print(f"Error: API directory not found at {api_dir}")
+        sys.exit(1)
+    
     # Start backend server
-    backend_process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "api:app", "--reload"],
-        cwd=api_dir,
-        creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
-    )
+    try:
+        backend_process = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "api:app", "--reload"],
+            cwd=api_dir,
+            creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
+        )
+    except Exception as e:
+        print(f"Error starting backend server: {str(e)}")
+        sys.exit(1)
     
     # Wait for backend to start
     time.sleep(2)
     
     # Start frontend server
-    frontend_process = subprocess.Popen(
-        ["npm", "run", "dev"],
-        cwd=frontend_dir,
-        creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
-    )
+    try:
+        frontend_process = subprocess.Popen(
+            ["npm", "run", "dev"],
+            cwd=frontend_dir,
+            creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
+        )
+    except Exception as e:
+        print(f"Error starting frontend server: {str(e)}")
+        backend_process.terminate()
+        sys.exit(1)
     
     # Wait for frontend to start
     time.sleep(5)
@@ -119,8 +171,12 @@ def main():
     print("Setting up Intune Deployment Toolkit development environment...")
     
     try:
-        # Check Python version
+        # Verify directory structure
+        verify_directory_structure()
+        
+        # Check versions
         check_python_version()
+        check_node_version()
         
         # Install dependencies
         install_frontend_dependencies()
