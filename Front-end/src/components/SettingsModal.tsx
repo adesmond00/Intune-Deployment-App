@@ -7,7 +7,6 @@ import React, { useState } from 'react'; // Add useState
 import { useTheme } from '../context/ThemeContext'; // Import the custom hook
 import { useTenant } from '../context/TenantContext'; // Import the tenant hook
 import { debugMode } from '../config'; // Import the debug flag
-import TenantConnectionModal from './TenantConnectionModal'; // Import the connection modal
 
 /**
  * Props for the SettingsModal component.
@@ -19,11 +18,7 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const { theme, toggleTheme } = useTheme(); // Consume the theme context
-  const { isConnected, disconnect, mockConnect, mockDisconnect, tenantId } = useTenant(); // Consume tenant context
-  const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false); // State for connection modal
-
-  const openConnectionModal = () => setIsConnectionModalOpen(true);
-  const closeConnectionModal = () => setIsConnectionModalOpen(false);
+  const { isConnected, disconnect, mockConnect, mockDisconnect, tenantId, connect } = useTenant();
 
   // Handle mock toggle change
   const handleMockToggle = () => {
@@ -34,7 +29,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     }
     // Do nothing if trying to toggle mock while a real connection exists
   };
-
 
   if (!isOpen) {
     return null; // Don't render if not open
@@ -101,7 +95,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
               </div>
             ) : (
               <button
-                onClick={openConnectionModal}
+                onClick={() => connect()}
                 className="w-full px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800"
               >
                 Connect to Tenant
@@ -145,12 +139,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
            </button>
          </div> */}
       </div>
-
-      {/* Render the Tenant Connection Modal */}
-      <TenantConnectionModal
-        isOpen={isConnectionModalOpen}
-        onClose={closeConnectionModal}
-      />
     </>
   );
 };
