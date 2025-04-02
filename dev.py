@@ -5,7 +5,9 @@ Development setup script for Intune Deployment Toolkit.
 This script handles:
 1. Installing frontend dependencies (npm)
 2. Installing backend dependencies (pip)
-3. Starting both frontend and backend servers in development mode
+3. Starting both frontend and backend servers in development mode.
+   - Backend server (uvicorn) is started on a dynamically chosen available port.
+   - The chosen API URL is passed to the frontend server via an environment variable.
 """
 
 import os
@@ -15,6 +17,7 @@ import time
 import webbrowser
 import signal
 import platform
+import re # Import regex module
 from pathlib import Path
 
 def verify_directory_structure():
@@ -144,17 +147,31 @@ def install_backend_dependencies():
     print("Backend dependencies installed.")
 
 def start_development_servers():
-    """Start both frontend and backend servers in development mode."""
+    """
+    Starts the backend (uvicorn) and frontend (npm) development servers.
+
+    The backend server is started first on host 127.0.0.1 and port 0, which allows
+    the OS to assign an available ephemeral port. The script captures the standard
+    output of the uvicorn process to find the actual URL (including the assigned port)
+    where the API is running. 
+
+    This captured API URL is then passed as an environment variable (VITE_API_BASE_URL)
+    to the frontend development server process (npm run dev).
+
+    Raises:
+        RuntimeError: If the backend server fails to start or the API URL cannot be
+                      determined from its output within a specified timeout.
+        FileNotFoundError: If required executables (python, uvicorn, node, npm) are missing.
+        Exception: For other unexpected errors during startup.
+    """
     print("\nStarting development servers...")
     
-    # Get absolute paths
     frontend_dir = Path("Front-end").resolve()
     api_dir = Path("api").resolve()
     
     print(f"Backend API directory: {api_dir}")
     print(f"Frontend directory: {frontend_dir}")
     
-    # Verify paths exist (redundant with verify_directory_structure but good safety check)
     if not api_dir.exists():
         print(f"Error: API directory not found at {api_dir}")
         sys.exit(1)
@@ -164,122 +181,152 @@ def start_development_servers():
     
     backend_process = None
     frontend_process = None
+    api_base_url = None
+    url_capture_timeout = 15 # Seconds to wait for API URL
 
     try:
-        # Start backend server
-        print(f"Starting backend server in {api_dir}...")
-        backend_cmd = [sys.executable, "-m", "uvicorn", "api:app", "--reload"]
+        # Start backend server on dynamic port
+        print(f"Starting backend server in {api_dir} on dynamic port...")
+        # Command uses --port 0 to request dynamic port assignment
+        # --reload is kept for development convenience
+        backend_cmd = [sys.executable, "-m", "uvicorn", "api:app", "--host", "127.0.0.1", "--port", "0", "--reload"]
         print(f"Backend command: {' '.join(backend_cmd)}")
+        
+        # Start the process, capturing stdout/stderr
         backend_process = subprocess.Popen(
             backend_cmd,
             cwd=api_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # Redirect stderr to stdout
+            text=True,
+            encoding='utf-8',
+            bufsize=1, # Line buffered
             creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
         )
-        print(f"Backend server process started (PID: {backend_process.pid})")
+        print(f"Backend server process starting (PID: {backend_process.pid}). Waiting for URL...")
+
+        # Capture the API URL from backend stdout
+        start_time = time.time()
+        url_pattern = re.compile(r"Uvicorn running on (http://127\.0\.0\.1:\d+)") # Regex to find the URL
         
-        # Wait for backend to start
-        print("Waiting for backend server to initialize...")
-        time.sleep(3) # Increased wait time
-        
-        # Start frontend server
+        while time.time() - start_time < url_capture_timeout:
+            if backend_process.stdout:
+                line = backend_process.stdout.readline()
+                if line:
+                    print(f"[BACKEND]: {line.strip()}") # Print backend output
+                    match = url_pattern.search(line)
+                    if match:
+                        api_base_url = match.group(1)
+                        print(f"\n*** Captured API Base URL: {api_base_url} ***\n")
+                        break # URL found, exit loop
+                else:
+                    # No output, wait briefly
+                    time.sleep(0.1)
+            else:
+                # stdout is not available (should not happen with PIPE)
+                time.sleep(0.1)
+
+            # Check if backend process terminated unexpectedly
+            if backend_process.poll() is not None:
+                raise RuntimeError(f"Backend server process terminated unexpectedly with code {backend_process.poll()} before announcing URL.")
+
+        # Check if URL was found
+        if not api_base_url:
+            raise RuntimeError(f"Could not determine backend API URL after {url_capture_timeout} seconds.")
+
+        # Prepare environment for frontend server
+        frontend_env = os.environ.copy()
+        frontend_env['VITE_API_BASE_URL'] = api_base_url
+        print(f"Passing VITE_API_BASE_URL={api_base_url} to frontend.")
+
+        # Start frontend server with the API URL environment variable
         print(f"Starting frontend server in {frontend_dir}...")
-        # Use shell=True on Windows for npm commands
         use_shell_frontend = platform.system() == "Windows"
         frontend_cmd = ["npm", "run", "dev"]
         print(f"Frontend command: {' '.join(frontend_cmd)} (shell={use_shell_frontend})")
         frontend_process = subprocess.Popen(
             frontend_cmd,
             cwd=frontend_dir,
-            shell=use_shell_frontend, # Use shell=True on Windows
+            shell=use_shell_frontend,
+            env=frontend_env, # Pass the modified environment
             creationflags=subprocess.CREATE_NEW_CONSOLE if platform.system() == "Windows" else 0
         )
         print(f"Frontend server process started (PID: {frontend_process.pid})")
         
-        # Wait for frontend to start
-        print("Waiting for frontend server to initialize...")
-        time.sleep(7) # Increased wait time
+        # Wait for frontend to likely start (can't easily detect readiness)
+        print("Waiting for frontend server to initialize (approx 7 seconds)...")
+        time.sleep(7)
         
         print("\nDevelopment servers running.")
-        # Open the application in the default browser
+        # Attempt to open the default frontend URL in browser
+        # Note: The actual Vite port (default 5173) isn't captured dynamically here,
+        # assumes default behavior. Could be enhanced if needed.
+        frontend_url = "http://localhost:5173"
         try:
-            print("Opening application in browser...")
-            webbrowser.open("http://localhost:5173")
+            print(f"Opening application frontend at {frontend_url} in browser...")
+            webbrowser.open(frontend_url)
         except Exception as browser_error:
             print(f"Warning: Could not open browser automatically: {browser_error}")
-            print("Please navigate to http://localhost:5173 manually.")
+            print(f"Please navigate to {frontend_url} manually.")
         
         print("\nPress Ctrl+C in this window to stop both servers.")
-        # Wait for backend process to finish (e.g., if it crashes)
-        backend_exit_code = backend_process.wait()
-        print(f"Backend server process exited with code {backend_exit_code}.")
+        # Wait indefinitely for user interrupt or process exit
+        signal.signal(signal.SIGINT, signal.default_int_handler) # Ensure Ctrl+C works
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0)) # Handle termination
+        try:
+             # Wait for backend to finish (e.g. user stops it, or it crashes)
+             backend_exit_code = backend_process.wait()
+             print(f"Backend server process exited with code {backend_exit_code}.")
+        except KeyboardInterrupt:
+             print("\nCtrl+C detected during wait. Proceeding to shutdown...")
 
     except FileNotFoundError as e:
         print(f"\nError: File Not Found during server startup.")
         print(f"This usually means an executable (like python, uvicorn, node, or npm) was not found in the system PATH.")
         print(f"Details: {str(e)}")
-        # Terminate the other process if it started
-        if backend_process and backend_process.poll() is None:
-            backend_process.terminate()
-        if frontend_process and frontend_process.poll() is None:
-            frontend_process.terminate()
         sys.exit(1)
-    except Exception as e:
-        print(f"\nAn unexpected error occurred during server startup: {str(e)}")
-        # Terminate the other process if it started
-        if backend_process and backend_process.poll() is None:
-            backend_process.terminate()
-        if frontend_process and frontend_process.poll() is None:
-            frontend_process.terminate()
+    except (RuntimeError, Exception) as e:
+        print(f"\nAn error occurred during server startup: {str(e)}")
         sys.exit(1)
-    except KeyboardInterrupt:
-        print("\nCtrl+C detected. Shutting down servers...")
     finally:
         # Ensure processes are terminated on exit or interrupt
-        if backend_process and backend_process.poll() is None:
-            print("Terminating backend server...")
-            backend_process.terminate()
-            backend_process.wait()
+        print("\nShutting down servers...") # Moved message here
         if frontend_process and frontend_process.poll() is None:
             print("Terminating frontend server...")
             frontend_process.terminate()
-            frontend_process.wait()
+            try:
+                frontend_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print("Frontend process did not terminate gracefully, killing...")
+                frontend_process.kill()
+        if backend_process and backend_process.poll() is None:
+            print("Terminating backend server...")
+            backend_process.terminate()
+            try:
+                backend_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print("Backend process did not terminate gracefully, killing...")
+                backend_process.kill()
         print("Servers stopped.")
 
 def main():
     """Main entry point for the development setup script."""
     print("="*60)
-    print("Setting up Intune Deployment Toolkit development environment...")
+    print("Starting Intune Deployment Toolkit Development Environment")
     print("="*60)
-    print(f"Running script from: {Path.cwd()}")
-    print(f"Operating System: {platform.system()} {platform.release()}")
     
     try:
-        # Verify directory structure
         verify_directory_structure()
-        
-        # Check versions
         check_python_version()
         check_node_version()
-        
-        # Install dependencies
-        install_frontend_dependencies()
         install_backend_dependencies()
-        
-        # Start development servers
+        install_frontend_dependencies()
         start_development_servers()
-        
-        print("\nSetup complete. Servers are running.")
-        
+    except Exception as e:
+        print(f"\nSetup failed: {e}")
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\nSetup interrupted by user.")
-        sys.exit(1)
-    except subprocess.CalledProcessError:
-        print("\nA command failed to execute. Please check the error messages above.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\nAn unexpected error occurred during setup: {str(e)}")
-        import traceback
-        traceback.print_exc() # Print detailed traceback for unexpected errors
         sys.exit(1)
 
 if __name__ == "__main__":
