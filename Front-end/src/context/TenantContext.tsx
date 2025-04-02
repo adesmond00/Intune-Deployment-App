@@ -35,11 +35,15 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   }, [tenantState]);
 
   const connect = async () => {
+    console.log('[TenantContext] connect function called.');
     try {
       setTenantState(prev => ({ ...prev, error: null }));
+      console.log('[TenantContext] Calling authService.login...');
       const result = await authService.login();
+      console.log('[TenantContext] Received result from authService.login:', result);
       
       if (result.success && result.tenantId) {
+        console.log('[TenantContext] Login successful, updating state.');
         setTenantState({
           isConnected: true,
           tenantId: result.tenantId,
@@ -54,7 +58,7 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         throw new Error(result.error || 'Failed to connect to tenant');
       }
     } catch (error) {
-      console.error('Failed to connect:', error);
+      console.error('[TenantContext] Error during connect:', error);
       setTenantState(prev => ({
         ...prev,
         error: error instanceof Error ? error.message : 'Failed to connect to tenant'

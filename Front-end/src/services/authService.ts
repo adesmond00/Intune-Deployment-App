@@ -46,7 +46,9 @@ export const authService = {
    * @returns Promise resolving to AuthResponse with connection status
    */
   async login(tenantId?: string, clientId?: string): Promise<AuthResponse> {
+    console.log('[authService] login called with: ', { tenantId, clientId }); // Log entry
     try {
+      console.log(`[authService] Sending POST request to ${API_BASE_URL}/intune/connect`); // Log API call
       const response = await fetch(`${API_BASE_URL}/intune/connect`, {
         method: 'POST',
         headers: {
@@ -55,12 +57,16 @@ export const authService = {
         body: JSON.stringify({ tenant_id: tenantId, client_id: clientId })
       });
 
+      console.log('[authService] Received response from API:', response); // Log raw response
       const result = await response.json();
+      console.log('[authService] Parsed JSON result:', result); // Log parsed result
 
       if (!response.ok || !result.success) {
+          console.error('[authService] API response indicates failure:', { status: response.status, result }); // Log failure
           throw new Error(result.error || result.detail || `HTTP error! status: ${response.status}`);
       }
       
+      console.log('[authService] Login successful, returning result.'); // Log success
       return {
         success: true,
         tenantId: result.tenant_id,
