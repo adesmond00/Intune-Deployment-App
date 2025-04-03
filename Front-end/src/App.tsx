@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react'; // Removed unused React import
 import { Routes, Route } from 'react-router-dom'; // Import routing components
 import { ThemeProvider } from './context/ThemeContext'; // Import ThemeProvider
 import { TenantProvider, useTenant } from './context/TenantContext'; // Import TenantProvider and useTenant
@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import ApplicationsPage from './pages/ApplicationsPage.tsx'; // Explicitly add .tsx extension
 import WingetAppPage from './pages/WingetAppPage'; // Import the new Winget page component
+import AuthCallbackPage from './pages/AuthCallbackPage'; // Import the new Auth Callback page
 import SettingsModal from './components/SettingsModal'; // Import the SettingsModal component
 
 interface HeaderProps {
@@ -100,6 +101,8 @@ function AppContent() { // Renamed original App content to AppContent
             <Route path="/applications" element={<ApplicationsPage />} />
             {/* Route for the Winget application search and staging page */}
             <Route path="/applications/winget" element={<WingetAppPage />} />
+            {/* Route for handling the OAuth callback */}
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
             {/* Add other routes here as needed */}
           </Routes>
         </main>

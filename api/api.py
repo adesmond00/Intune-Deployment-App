@@ -270,9 +270,8 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         # Add other user info here if parsed from id_token
     }
 
-    # Redirect back to the frontend application root
-    # Assuming frontend is served at the root '/'
-    redirect_response = RedirectResponse(url="/", status_code=302)
+    # Redirect back to the dedicated frontend callback route
+    redirect_response = RedirectResponse(url="/auth/callback", status_code=302) # Changed URL
 
     # Set the session cookie containing the tokens
     redirect_response.set_cookie(

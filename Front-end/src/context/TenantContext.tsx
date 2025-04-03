@@ -58,7 +58,7 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     // Set loading state only if not already loading (prevents flicker on visibility change)
     if (!isLoadingStatus) setIsLoadingStatus(true);
-    setTenantState(prev => ({ ...prev, error: null })); // Clear previous errors
+    setTenantState({ ...tenantState, error: null }); // Clear previous errors (using state variable directly)
 
     // Start timeout only if this is the post-redirect check
     if (isPostRedirect) {
