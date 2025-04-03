@@ -6,13 +6,14 @@ interface TenantState {
   tenantId: string | null;
   tenantName: string | null;
   error: string | null;
+  // checkStatus removed from state interface
 }
 
 interface TenantContextProps extends TenantState {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
+  // connect and disconnect removed
   mockConnect: (mockTenantName: string) => void;
   mockDisconnect: () => void;
+  checkStatus: () => Promise<void>; // Add checkStatus here
 }
 
 const TenantContext = createContext<TenantContextProps | undefined>(undefined);
@@ -22,6 +23,7 @@ const initialState: TenantState = {
   tenantId: null,
   tenantName: null,
   error: null,
+  // checkStatus removed from initial state definition
 };
 
 export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -30,84 +32,81 @@ export const TenantProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     return storedState ? JSON.parse(storedState) : initialState;
   });
 
+  // Persist state to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem('tenantConnection', JSON.stringify(tenantState));
   }, [tenantState]);
 
-  const connect = async () => {
-    console.log('[TenantContext] connect function called.');
+  // Function to check authentication status with the backend
+  const checkStatus = async () => {
+    console.log('[TenantContext] checkStatus called.');
+    // Avoid checking status if we know we are mock-connected
+    if (tenantState.tenantId === 'mock-tenant-id') {
+        console.log('[TenantContext] Skipping status check during mock connection.');
+        return;
+    }
     try {
-      setTenantState(prev => ({ ...prev, error: null }));
-      console.log('[TenantContext] Calling authService.login...');
-      const result = await authService.login();
-      console.log('[TenantContext] Received result from authService.login:', result);
-      
-      if (result.success && result.tenantId) {
-        console.log('[TenantContext] Login successful, updating state.');
-        setTenantState({
+      setTenantState(prev => ({ ...prev, error: null })); // Clear previous errors
+      const status = await authService.getStatus();
+      console.log('[TenantContext] Received status from authService.getStatus:', status);
+
+      if (status.active && status.tenant_id) {
+        // Update state without checkStatus
+        setTenantState(prev => ({
+          ...prev, // Keep potential previous state like error if needed, though cleared above
           isConnected: true,
-          tenantId: result.tenantId,
-          tenantName: result.tenantId, // You could fetch a more friendly name if needed
+          tenantId: status.tenant_id ?? null, // Ensure null if undefined
+          tenantName: status.tenant_id ?? null, // Use tenantId as name for now, ensure null if undefined
           error: null,
-        });
-      } else {
-        setTenantState(prev => ({
-          ...prev,
-          error: result.error || 'Failed to connect to tenant'
         }));
-        throw new Error(result.error || 'Failed to connect to tenant');
+      } else {
+        // If not active or error occurred during status check, reset to initial state
+        // Ensure initialState doesn't include checkStatus
+        setTenantState({ ...initialState }); 
+        if (status.error) {
+             console.warn('[TenantContext] Status check indicated inactive or error:', status.error);
+             // Optionally set an error state here if needed, but often just being logged out is enough
+             // setTenantState(prev => ({ ...initialState, error: status.error }));
+        }
       }
     } catch (error) {
-      console.error('[TenantContext] Error during connect:', error);
-      setTenantState(prev => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to connect to tenant'
-      }));
-      throw error;
+      console.error('[TenantContext] Error during checkStatus:', error);
+      // Reset to initial state on error, ensuring checkStatus isn't included
+      setTenantState({ 
+        ...initialState, 
+        error: error instanceof Error ? error.message : 'Failed to check connection status' 
+      });
     }
   };
 
-  const disconnect = async () => {
-    try {
-      setTenantState(prev => ({ ...prev, error: null }));
-      const result = await authService.logout();
-      
-      if (result.success) {
-        setTenantState(initialState);
-      } else {
-        setTenantState(prev => ({
-          ...prev,
-          error: result.error || 'Failed to disconnect from tenant'
-        }));
-        throw new Error(result.error || 'Failed to disconnect from tenant');
-      }
-    } catch (error) {
-      console.error('Failed to disconnect:', error);
-      setTenantState(prev => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to disconnect from tenant'
-      }));
-      throw error;
-    }
-  };
+  // Check status when the component mounts
+  useEffect(() => {
+    checkStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array ensures this runs only once on mount
 
+
+  // --- Mock connection functions (for debugging UI without real auth) ---
   const mockConnect = (mockTenantName: string) => {
-    setTenantState({
+    // Update state without checkStatus
+    setTenantState(prev => ({
+      ...prev, // Keep potential previous state
       isConnected: true,
       tenantId: 'mock-tenant-id',
       tenantName: mockTenantName,
       error: null,
-    });
+    }));
   };
 
   const mockDisconnect = () => {
     if (tenantState.tenantId === 'mock-tenant-id') {
-      setTenantState(initialState);
+      // Reset state without checkStatus
+      setTenantState({ ...initialState });
     }
   };
 
   return (
-    <TenantContext.Provider value={{ ...tenantState, connect, disconnect, mockConnect, mockDisconnect }}>
+    <TenantContext.Provider value={{ ...tenantState, mockConnect, mockDisconnect, checkStatus }}>
       {children}
     </TenantContext.Provider>
   );

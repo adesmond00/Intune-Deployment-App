@@ -3,9 +3,10 @@
  *
  * Displays application settings, including dark mode and tenant connection options.
  */
-import React, { useState } from 'react'; // Add useState
+import React from 'react'; // Removed useState as it's not used directly here anymore
 import { useTheme } from '../context/ThemeContext'; // Import the custom hook
 import { useTenant } from '../context/TenantContext'; // Import the tenant hook
+import { authService } from '../services/authService'; // Import the auth service
 import { debugMode } from '../config'; // Import the debug flag
 
 /**
@@ -18,7 +19,8 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const { theme, toggleTheme } = useTheme(); // Consume the theme context
-  const { isConnected, disconnect, mockConnect, mockDisconnect, tenantId, connect } = useTenant();
+  // Removed connect and disconnect from useTenant, keeping others for mock/status
+  const { isConnected, mockConnect, mockDisconnect, tenantId } = useTenant();
 
   // Handle mock toggle change
   const handleMockToggle = () => {
@@ -84,21 +86,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             {isConnected ? (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600 dark:text-gray-400">
-                  Connected as: {tenantId === 'mock-tenant-id' ? 'Mock Tenant' : tenantId}
+                  Connected as: {tenantId === 'mock-tenant-id' ? 'Mock Tenant' : (tenantId || 'Unknown')}
                 </span>
                 <button
-                  onClick={disconnect}
+                  onClick={() => authService.logout()} // Use authService.logout
                   className="px-3 py-1 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-800"
                 >
-                  Disconnect
+                  Logout
                 </button>
               </div>
             ) : (
               <button
-                onClick={() => connect()}
+                onClick={() => authService.login()} // Use authService.login
                 className="w-full px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-800"
               >
-                Connect to Tenant
+                Login / Connect Tenant
               </button>
             )}
           </div>

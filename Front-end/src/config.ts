@@ -1,34 +1,20 @@
-/// <reference types="vite/client" />
+// Base URL for the backend API
+export const API_BASE_URL = 'http://localhost:8000';
 
-/**
- * Configuration file for frontend settings.
- * This file centralizes configuration variables for easy management.
- */
+// Debug mode flag (e.g., for showing mock connection toggles)
+export const debugMode = true; // Set to false for production builds or when not debugging
 
-/**
- * The base URL for the backend API.
- * This value is read from the VITE_API_BASE_URL environment variable,
- * which is set by the development startup script (e.g., dev.py)
- * or during the build process for production.
- */
-const envApiUrl = import.meta.env.VITE_API_BASE_URL;
+// --- Azure AD Configuration (Replace with your actual values) ---
+// Application (client) ID for your Azure AD App Registration
+export const AZURE_CLIENT_ID = 'YOUR_CLIENT_ID_HERE';
+// Directory (tenant) ID for your Azure AD Tenant
+export const AZURE_TENANT_ID = 'YOUR_TENANT_ID_HERE';
+// ------------------------------------------------------------------
 
-if (!envApiUrl) {
-  console.error(
-    "Fatal Error: VITE_API_BASE_URL environment variable is not set. " +
-    "Ensure the development script (dev.py) is running correctly or the environment variable is set during build."
+// Ensure placeholders are replaced before production
+if (AZURE_CLIENT_ID === 'YOUR_CLIENT_ID_HERE' || AZURE_TENANT_ID === 'YOUR_TENANT_ID_HERE') {
+  console.warn(
+    'Azure AD configuration placeholders detected in src/config.ts. ' +
+    'Replace YOUR_CLIENT_ID_HERE and YOUR_TENANT_ID_HERE with your actual Azure AD App Registration details.'
   );
-  // Provide a default fallback for critical failure, although connection will likely fail.
-  // Or throw an error: throw new Error("VITE_API_BASE_URL is not set");
 }
-
-export const API_BASE_URL = envApiUrl || 'http://127.0.0.1:60706'; // Fallback only as last resort
-
-// Set to true to enable debug-specific UI elements and features
-export const debugMode = true;
-
-// Add other frontend configuration constants here as needed.
-
-// Other configuration constants can be added here
-export const APP_NAME = 'Intune Deployment Toolkit';
-export const APP_VERSION = '1.0.0';

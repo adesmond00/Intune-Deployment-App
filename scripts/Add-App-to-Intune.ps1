@@ -1,4 +1,8 @@
-Import-Module -Name "IntuneWin32App"
+#Requires -Modules Microsoft.Graph.Authentication, IntuneWin32App
+
+# Import necessary modules explicitly
+Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
+Import-Module IntuneWin32App -ErrorAction SilentlyContinue
 
 <#
 .SYNOPSIS
@@ -73,13 +77,21 @@ Import-Module -Name "IntuneWin32App"
     - The .intunewin file must be created before using this command
     - Detection and requirement rules must be properly configured for successful deployment
     - The application will not be assigned to any users or devices by default; assignments must be created separately
+    - Requires a valid Microsoft Graph Access Token with appropriate permissions (e.g., DeviceManagementApps.ReadWrite.All).
+
+.PARAMETER AccessToken
+    A valid Microsoft Graph Access Token for authentication. This token must have the necessary permissions
+    to create applications in Intune.
 #>
 
 
 #Adds the app to Intune as a win32 App
 function Add-AppToIntune {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess = $true)] # Added SupportsShouldProcess
     param(
+        [Parameter(Mandatory = $true)]
+        [string]$AccessToken,
+
         [Parameter(Mandatory = $true)]
         [string]$IntuneWinFile,
 
@@ -113,17 +125,78 @@ function Add-AppToIntune {
         [string]$UninstallCommandLine
     )
 
-    return Add-IntuneWin32App -FilePath $IntuneWinFile `
-        -DisplayName $DisplayName `
-        -Description $Description `
-        -Publisher $Publisher `
-        -InstallExperience $InstallExperience `
-        -RestartBehavior $RestartBehavior `
-        -DetectionRule $DetectionRule `
-        -RequirementRule $RequirementRule `
-        -InstallCommandLine $InstallCommandLine `
-        -UninstallCommandLine $UninstallCommandLine `
-        -Verbose
+    $ErrorActionPreference = 'Stop' # Stop on terminating errors
+    $result = @{ success = $false; output = $null; error = $null }
+
+    try {
+        Write-Verbose "Attempting to connect to Microsoft Graph with provided access token."
+        # Convert the token string to a SecureString
+        $secureToken = ConvertTo-SecureString -String $AccessToken -AsPlainText -Force
+        Connect-MgGraph -AccessToken $secureToken
+        Write-Verbose "Successfully connected to Microsoft Graph."
+
+        # Check if modules are available after attempting import
+        if (-not (Get-Module -Name Microsoft.Graph.Authentication) -or -not (Get-Module -Name IntuneWin32App)) {
+             throw "Required PowerShell modules (Microsoft.Graph.Authentication, IntuneWin32App) are not available."
+        }
+
+        # Prepare parameters for Add-IntuneWin32App
+        $addParams = @{
+            FilePath            = $IntuneWinFile
+            DisplayName         = $DisplayName
+            Description         = $Description
+            Publisher           = $Publisher
+            InstallExperience   = $InstallExperience
+            RestartBehavior     = $RestartBehavior
+            DetectionRule       = $DetectionRule
+            RequirementRule     = $RequirementRule
+            InstallCommandLine  = $InstallCommandLine
+            UninstallCommandLine = $UninstallCommandLine
+            Verbose             = $true # Keep verbose logging from the cmdlet
+        }
+
+        Write-Verbose "Calling Add-IntuneWin32App with parameters:"
+        Write-Verbose ($addParams | Out-String)
+
+        if ($PSCmdlet.ShouldProcess($DisplayName, "Add Win32 App to Intune")) {
+            # Execute the command
+            $intuneApp = Add-IntuneWin32App @addParams
+            
+            if ($intuneApp) {
+                Write-Verbose "Successfully added application '$DisplayName' to Intune."
+                $result.success = $true
+                # Select relevant properties to return, convert to JSON friendly format
+                $result.output = $intuneApp | Select-Object -Property Id, DisplayName, Publisher, CreatedDateTime, LastModifiedDateTime, Version | ConvertTo-Json -Depth 3 
+            } else {
+                throw "Add-IntuneWin32App command did not return an application object."
+            }
+        } else {
+             Write-Warning "Operation cancelled by ShouldProcess."
+             $result.error = "Operation cancelled by ShouldProcess."
+        }
+
+    } catch {
+        Write-Error "Error adding application '$DisplayName' to Intune: $($_.Exception.Message)"
+        Write-Error $_.ScriptStackTrace
+        $result.error = "Error adding application '$DisplayName': $($_.Exception.Message)"
+        # Output error details to stderr as JSON
+        Write-Error ($result | ConvertTo-Json -Depth 3)
+        # Exit with non-zero code to indicate failure to the caller
+        exit 1 
+    } finally {
+         # Disconnect if needed, though token-based connection is usually stateless per command
+         # Disconnect-MgGraph -ErrorAction SilentlyContinue 
+         
+         # Output final result to stdout as JSON if successful
+         if ($result.success) {
+             Write-Output ($result | ConvertTo-Json -Depth 3)
+         }
+    }
 }
 
-
+# Example of how to call this if run directly (requires manual token input)
+# if ($MyInvocation.MyCommand.CommandOrigin -eq 'Runspace') {
+#     $token = Read-Host -Prompt "Enter Access Token"
+#     # Add other parameter values here...
+#     Add-AppToIntune -AccessToken $token # ... other params
+# }

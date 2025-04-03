@@ -1,13 +1,14 @@
 /**
- * Service module for handling Intune authentication and PowerShell command execution.
- * This service provides a clean interface for the frontend to interact with the backend API
- * for managing Intune connections and executing PowerShell commands.
+ * Service module for handling authentication initiation and backend API interaction.
+ * This service provides a clean interface for the frontend to interact with the backend API.
+ * Authentication is initiated by redirecting to backend endpoints which handle the OAuth flow.
  */
 
 import { API_BASE_URL } from '../config';
+// MSAL imports are removed as the primary interaction is now redirect-based via the backend
 
 /**
- * Response interface for authentication operations (login/logout)
+ * Response interface for authentication operations (login/logout) - Primarily for logout confirmation now.
  */
 interface AuthResponse {
   success: boolean;      // Whether the operation completed successfully
@@ -42,74 +43,27 @@ export const authService = {
   /**
    * Establishes a connection to Intune using either provided credentials or interactive login
    * @param tenantId - Optional tenant ID for direct connection
-   * @param clientId - Optional client ID for direct connection
-   * @returns Promise resolving to AuthResponse with connection status
-   */
-  async login(tenantId?: string, clientId?: string): Promise<AuthResponse> {
-    console.log('[authService] login called with: ', { tenantId, clientId }); // Log entry
-    try {
-      console.log(`[authService] Sending POST request to ${API_BASE_URL}/intune/connect`); // Log API call
-      const response = await fetch(`${API_BASE_URL}/intune/connect`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ tenant_id: tenantId, client_id: clientId })
-      });
-
-      console.log('[authService] Received response from API:', response); // Log raw response
-      const result = await response.json();
-      console.log('[authService] Parsed JSON result:', result); // Log parsed result
-
-      if (!response.ok || !result.success) {
-          console.error('[authService] API response indicates failure:', { status: response.status, result }); // Log failure
-          throw new Error(result.error || result.detail || `HTTP error! status: ${response.status}`);
-      }
-      
-      console.log('[authService] Login successful, returning result.'); // Log success
-      return {
-        success: true,
-        tenantId: result.tenant_id,
-        message: result.message
-      };
-      
-    } catch (error) {
-      console.error('Login failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred during login'
-      };
-    }
+ * @param _tenantId - No longer used directly by frontend login.
+ * @param _clientId - No longer used directly by frontend login.
+ * @returns This function now redirects the browser and doesn't return a Promise in the traditional sense.
+ */
+  login(_tenantId?: string, _clientId?: string): void {
+    console.log('[authService] login called. Redirecting to backend for authentication.');
+    // Redirect the browser to the backend endpoint that starts the OAuth flow
+    window.location.href = `${API_BASE_URL}/auth/login`;
+    // Note: No promise is returned as the page navigates away.
+    // The application state will be updated upon successful redirect back from the backend callback.
   },
 
   /**
-   * Terminates the current Intune connection
-   * @returns Promise resolving to AuthResponse with disconnection status
+   * Initiates the logout process by redirecting to the backend logout endpoint.
+   * @returns This function now redirects the browser and doesn't return a Promise.
    */
-  async logout(): Promise<AuthResponse> {
-    try {
-      const response = await fetch(`${API_BASE_URL}/intune/disconnect`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || result.detail || `HTTP error! status: ${response.status}`);
-      }
-      
-      return { success: true, message: result.message };
-
-    } catch (error) {
-      console.error('Logout failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred during logout'
-      };
-    }
+  logout(): void {
+    console.log('[authService] logout called. Redirecting to backend for logout.');
+    // Redirect the browser to the backend endpoint that handles logout
+    window.location.href = `${API_BASE_URL}/auth/logout`;
+    // Note: No promise is returned as the page navigates away.
   },
 
   /**
@@ -175,4 +129,4 @@ export const authService = {
       };
     }
   }
-}; 
+};

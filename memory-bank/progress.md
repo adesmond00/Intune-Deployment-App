@@ -2,69 +2,47 @@
 
 ## What Works / Exists
 
-*   **Frontend Shell & Routing**: A basic React application structure exists (`Front-end/`) using Vite and TypeScript. It includes:
-    *   A header and a functional, collapsible sidebar (`Front-end/src/components/Sidebar.tsx`) styled with TailwindCSS.
-    *   Client-side routing implemented using `react-router-dom`.
-    *   Routes defined for `/` (Dashboard) and `/applications`.
-    *   A placeholder `DashboardPage` component (`Front-end/src/pages/DashboardPage.tsx`).
-    *   An `ApplicationsPage` component (`Front-end/src/pages/ApplicationsPage.tsx`) with a welcome message and navigation links/buttons.
-    *   A `WingetAppPage` component (`Front-end/src/pages/WingetAppPage.tsx`) providing:
-        *   UI for searching Winget apps via the `/winget-search` API.
-        *   Correct handling and display of search results.
-        *   Ability to "stage" apps into a separate list, storing structured deployment info (`StagedAppDeploymentInfo` interface), including **auto-generated install/uninstall command lines**.
-        *   Basic loading and error handling for the search.
-        *   Button to open deployment configuration modal.
-    *   A `DeploymentConfigModal` component (`Front-end/src/components/DeploymentConfigModal.tsx`) providing:
-        *   Modal UI with side menu for selecting staged apps.
-        *   Form area for configuring deployment parameters (`displayName`, `description`, `publisher`, `installExperience`, `restartBehavior`) for the selected app.
-        *   **Conditional display** (via `showCommandLines` flag, default `false`) of the auto-generated command lines.
-        *   State management and callbacks (`onUpdateApp`) to update configuration in the parent page (`WingetAppPage`).
-        *   Placeholders for remaining skipped configuration fields (Detection/Requirement Rules).
-    *   Functional navigation links in the sidebar and on the Applications page.
-    *   Configuration file (`Front-end/src/config.ts`) for API base URL.
-    *   **Dark Mode**: Implemented using TailwindCSS class strategy (`darkMode: 'class'`). Includes:
-        *   `ThemeContext` for global state management and `<html>` class toggling.
-        *   `SettingsModal` component with a functional theme toggle switch.
-        *   Basic dark mode styles applied to core layout, pages, and modals.
-*   **Backend API Foundation**: A FastAPI application (`api/`) is set up with basic endpoints:
-    *   `/`: Welcome message.
-    *   `/winget-search`: Accepts a search term via `GET` request query parameter (`?term=...`) and uses `api/winget.py` to execute `winget search`, returning parsed results. (Method changed from POST to GET, syntax error fixed).
-    *   `/execute-script`: Accepts a script path and parameters via `POST`, executes the specified PowerShell script using `subprocess.Popen`, and returns stdout/stderr. This is a generic executor.
-    *   **CORS Configuration**: Permissive CORS middleware added via `api/middleware.py` and applied in `api/api.py` to allow frontend requests during development (includes warnings for production).
-*   **Winget Search Logic**: The `api/winget.py` module successfully calls `winget search`, parses the output into a structured list of applications (correctly skipping header/separator lines), and no longer contains the unused `WingetSearch` Pydantic model.
-*   **Intune Connection Script**: `scripts/Connect-to-Intune.ps1` provides a function to install necessary modules (`IntuneWin32App`, `Microsoft.Graph.Intune`) and connect to Intune using interactive authentication.
-*   **Add App Script**: `scripts/Add-App-to-Intune.ps1` provides a function that wraps `Add-IntuneWin32App`, accepting parameters needed to define a Win32 app in Intune (requires a pre-existing `.intunewin` file).
-*   **Winget Install/Uninstall Script**: `scripts/Winget-InstallPackage.ps1` is a relatively complete and robust script for installing or uninstalling applications via `winget`. It handles:
-    *   Running as 64-bit.
-    *   Logging.
-    *   Detecting and installing `winget` itself if missing (including downloading/extracting the MSIX bundle and handling dependencies like Visual C++ Redistributable).
-    *   Executing `winget install` or `winget uninstall` with appropriate arguments.
+*   **Frontend Shell & Routing**: Basic React app structure with routing, sidebar, header, pages (`Dashboard`, `Applications`, `WingetApp`).
+*   **Winget Search/Staging UI**: `WingetAppPage` allows searching via backend API, displaying results, staging apps with auto-generated command lines, and opening configuration modal.
+*   **Deployment Configuration UI**: `DeploymentConfigModal` allows editing basic app parameters (`displayName`, `description`, etc.) with conditional display of command lines.
+*   **Dark Mode**: Functional dark mode toggle via `ThemeContext` and `SettingsModal`.
+*   **Backend API Foundation**: FastAPI app (`api/`) with CORS.
+    *   `/winget-search`: Functional endpoint using `winget.py`.
+    *   **OAuth 2.0 Authentication Flow**:
+        *   `/auth/login`: Initiates redirect to Microsoft login.
+        *   `/auth/callback`: Handles Microsoft redirect, exchanges code for tokens, sets secure session cookie.
+        *   `/auth/logout`: Clears session cookie, redirects to Microsoft logout.
+        *   Session management via signed HTTP-only cookies (`itsdangerous`).
+        *   Automatic access token refresh using refresh tokens.
+        *   `get_current_session` dependency protects endpoints and provides session data.
+    *   `/intune/status`: Reports authentication status based on valid session cookie.
+    *   `/execute-script`: Executes PowerShell scripts in *temporary* processes, passing the access token from the session via `-AccessToken` parameter.
+*   **Winget Search Logic**: `api/winget.py` correctly parses `winget search` output.
+*   **PowerShell Scripts**:
+    *   `Add-App-to-Intune.ps1`: Updated to accept `-AccessToken` parameter and use `Connect-MgGraph -AccessToken`. Outputs JSON result.
+    *   `Connect-to-Intune.ps1`: Refactored to only check/install required modules (`Microsoft.Graph.Authentication`, `IntuneWin32App`). Outputs JSON status.
+    *   `Winget-InstallPackage.ps1`: Robust script for winget install/uninstall (currently runs standalone).
+*   **Configuration Placeholders**: Placeholders added for Azure AD details and session secret key in `api/api.py` and `Front-end/src/config.ts`.
+*   **Virtual Environment**: Backend dependencies installed in `api/.venv`.
 
 ## What's Missing / Incomplete / Needs Work
 
+*   **Configuration Values**: **User MUST replace placeholder values** for `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, and `ITSANGEROUS_SECRET_KEY` in `api/api.py` and `Front-end/src/config.ts`.
+*   **Testing**: The new authentication flow and token-based script execution require thorough testing.
 *   **Frontend Functionality**:
-    *   The Winget search/staging UI (`WingetAppPage`) allows searching, staging, and opening the configuration modal.
-    *   The configuration modal (`DeploymentConfigModal`) allows editing basic deployment parameters, but the final "Confirm Configuration" button is a placeholder (doesn't trigger deployment).
-    *   The "Add an App with Scoop" button on `ApplicationsPage` is not wired up.
-    *   No components exist for adding/configuring custom MSI/EXE applications.
-    *   No UI exists for displaying deployment status/feedback beyond basic search errors.
-*   **Backend Orchestration Logic**: The API currently only executes *single* scripts (`/execute-script`) or performs searches (`/winget-search`). It lacks the higher-level logic to orchestrate the full deployment workflow (e.g., take staged apps list -> trigger packaging -> trigger Intune upload/creation).
-*   **Packaging Logic**: `scripts/Package-MSI.ps1` is incomplete. It needs the actual implementation to use the `IntuneWin32App` module (specifically `New-IntuneWin32AppPackage`) to create the `.intunewin` file from source files (like MSI/EXE).
-*   **Integration**: The frontend Winget search is integrated with the backend `/winget-search` API. However, the deployment step (frontend "Deploy" button to backend orchestration) is not integrated.
-*   **`main.ps1`**: This file is empty and its purpose is undefined.
-*   **Error Handling**: No comprehensive error handling across the frontend-API-script layers.
-*   **Security**:
-    *   API endpoint for script execution (`/execute-script`) is insecure.
-    *   Intune connection uses interactive auth, unsuitable for automation.
-    *   CORS configuration is currently permissive (`allow_origins=["*"]`) and needs restriction for production.
-*   **Asynchronous Operations**: No handling for potentially long-running packaging/upload tasks.
-*   **State Persistence**: Backend uses in-memory lists; needs persistent storage if required.
-*   **Configuration Management**: How settings like TenantID are managed is unclear (hardcoded ClientID in `Connect-to-Intune.ps1`, TenantID passed as param).
+    *   Deployment confirmation/triggering from `DeploymentConfigModal` is not implemented.
+    *   "Add an App with Scoop" and custom MSI/EXE features are not implemented.
+    *   UI for deployment status/feedback needs implementation.
+    *   Improved handling of potential auth errors surfaced in URL query params after callback redirect.
+*   **Backend Orchestration Logic**: No high-level logic exists yet to orchestrate the full deployment workflow (staging -> packaging -> Intune creation).
+*   **Packaging Logic**: `scripts/Package-MSI.ps1` is incomplete (needs `New-IntuneWin32AppPackage` implementation).
+*   **PowerShell Script Updates**: Other scripts (`Package-MSI.ps1`, potentially `Winget-InstallPackage.ps1` if Intune context is needed) may need updating to accept `-AccessToken`.
+*   **`main.ps1`**: Purpose undefined.
+*   **Error Handling**: Comprehensive error handling across layers still needed.
+*   **Security**: Production deployment requires using environment variables for secrets, stricter CORS, etc.
+*   **Asynchronous Operations**: Handling for long-running packaging/upload tasks is not implemented.
+*   **State Persistence**: Backend uses in-memory lists for deployments; needs persistent storage if required beyond Intune's state.
 
 ## Known Issues
-*   None explicitly documented, but the incompleteness of major components (packaging, orchestration, UI functionality) is the primary "issue".
-*   Security vulnerabilities in the current `/execute-script` endpoint design.
-*   (Resolved) The `/winget-search` endpoint previously accepted POST instead of GET.
-*   (Resolved) Syntax error in `api/api.py` related to the `/winget-search` modification.
-*   (Resolved) Frontend failed to display search results due to incorrect parsing of the API response structure (both parsing the nested array and using incorrect case for property names).
-*   (Resolved) Backend parsing of `winget search` output incorrectly included the header row as a result.
+*   **(Resolved)** "Connect to Tenant" feature hung due to attempting interactive PowerShell login from the backend. Replaced with OAuth 2.0 flow.
+*   **(Previous/Resolved)** Various issues related to Winget search API method, response parsing, CORS, etc.
