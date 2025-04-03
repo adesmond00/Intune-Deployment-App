@@ -11,10 +11,4 @@ export const AZURE_CLIENT_ID = 'YOUR_CLIENT_ID_HERE';
 export const AZURE_TENANT_ID = 'YOUR_TENANT_ID_HERE';
 // ------------------------------------------------------------------
 
-// Ensure placeholders are replaced before production
-if (AZURE_CLIENT_ID === 'YOUR_CLIENT_ID_HERE' || AZURE_TENANT_ID === 'YOUR_TENANT_ID_HERE') {
-  console.warn(
-    'Azure AD configuration placeholders detected in src/config.ts. ' +
-    'Replace YOUR_CLIENT_ID_HERE and YOUR_TENANT_ID_HERE with your actual Azure AD App Registration details.'
-  );
-}
+
