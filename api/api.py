@@ -42,8 +42,11 @@ import base64 # For PKCE
 AZURE_CLIENT_ID = "YOUR_CLIENT_ID_HERE"
 AZURE_TENANT_ID = "YOUR_TENANT_ID_HERE"
 AZURE_CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
-# The redirect URI configured in your Azure AD App Registration
+# The redirect URI configured in your Azure AD App Registration (Points to THIS backend)
 AZURE_REDIRECT_URI = "http://localhost:8000/auth/callback" # Make sure this matches Azure AD
+# Frontend URL configuration (Where the user UI runs)
+FRONTEND_BASE_URL = "http://localhost:5173"
+FRONTEND_CALLBACK_URL = f"{FRONTEND_BASE_URL}/auth/callback" # Full URL for frontend callback route
 # Scope required for Intune and offline access (refresh tokens)
 AZURE_SCOPES = ["openid", "profile", "offline_access", "https://graph.microsoft.com/.default"]
 # ------------------------------------------------------------------
@@ -210,8 +213,9 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         # Redirect to a frontend error page or show an error
         # For simplicity, redirecting back to root with error query params
         error_params = urllib.parse.urlencode({"auth_error": error, "auth_error_desc": error_description})
-        # Redirect to frontend root (assuming it's served at '/')
-        return RedirectResponse(url=f"/?{error_params}")
+        # Redirect to frontend base URL with error parameters
+        frontend_error_url = f"{FRONTEND_BASE_URL}/?{error_params}"
+        return RedirectResponse(url=frontend_error_url) # Redirect to frontend with error
 
     # Retrieve the state from the cookie
     state_cookie = request.cookies.get(STATE_COOKIE_NAME)
@@ -240,7 +244,7 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         "client_id": AZURE_CLIENT_ID,
         "scope": " ".join(AZURE_SCOPES),
         "code": code,
-        "redirect_uri": AZURE_REDIRECT_URI,
+        "redirect_uri": AZURE_REDIRECT_URI, # This MUST match the URI used in the initial auth request
         "grant_type": "authorization_code",
         "client_secret": AZURE_CLIENT_SECRET, # Send client secret for token exchange
         "code_verifier": code_verifier # Add the PKCE code verifier
@@ -270,8 +274,8 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         # Add other user info here if parsed from id_token
     }
 
-    # Redirect back to the dedicated frontend callback route
-    redirect_response = RedirectResponse(url="/auth/callback", status_code=302) # Changed URL
+    # Redirect back to the dedicated frontend callback route using the configured constant
+    redirect_response = RedirectResponse(url=FRONTEND_CALLBACK_URL, status_code=302)
 
     # Set the session cookie containing the tokens
     redirect_response.set_cookie(
@@ -297,16 +301,12 @@ async def auth_logout(request: Request):
     to the Microsoft identity platform end session endpoint.
     """
     # Construct the Microsoft logout URL
-    # Determine the base URL for post_logout_redirect_uri
-    base_url = str(request.base_url)
-    if base_url.endswith('/'):
-        base_url = base_url[:-1] # Remove trailing slash if present
-
+    # Construct the Microsoft logout URL
     logout_url = (
         f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/logout?"
         + urllib.parse.urlencode({
-            # Redirect back to frontend root after logout
-            "post_logout_redirect_uri": base_url
+            # Redirect back to frontend base URL after logout using the configured constant
+            "post_logout_redirect_uri": FRONTEND_BASE_URL
         })
     )
 
