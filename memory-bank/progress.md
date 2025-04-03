@@ -45,6 +45,7 @@
 *   **State Persistence**: Backend uses in-memory lists for deployments; needs persistent storage if required beyond Intune's state.
 
 ## Known Issues
+*   **Frontend UI Not Updating After Login:** After successful OAuth login and redirect, the frontend UI (`TenantContext`) does not automatically reflect the logged-in state. The `checkStatus` call on load might not be detecting the new session cookie immediately. Requires investigation.
 *   **(Resolved)** "Connect to Tenant" feature hung due to attempting interactive PowerShell login from the backend. Replaced with OAuth 2.0 flow + PKCE.
 *   **(Resolved)** Backend failed to load (`ModuleNotFoundError`, `ImportError`) due to incorrect Uvicorn command execution directory/flags and missing/incorrect imports. Corrected imports and run command.
 *   **(Resolved)** Azure AD required PKCE (`AADSTS9002325`). Implemented PKCE in backend auth flow.

@@ -23,10 +23,11 @@ Implemented PKCE (Proof Key for Code Exchange) in the OAuth 2.0 flow to address 
 *   **(Previous)** Adjusted Command Line Display & Fixed Modals/Dark Mode.
 
 ## Next Steps (Project Development)
+*   **Fix Frontend State Update:** Diagnose and fix why the frontend UI (`TenantContext`) doesn't update automatically after successful OAuth login/redirect. The `checkStatus` call on load might not be detecting the new session immediately.
 *   **Replace Placeholders:** User needs to replace `YOUR_CLIENT_ID_HERE`, `YOUR_TENANT_ID_HERE`, `YOUR_CLIENT_SECRET_HERE`, and `YOUR_SECRET_KEY_HERE_REPLACE_ME` in `api/api.py` and `Front-end/src/config.ts`.
-*   **Testing:** Thoroughly test the login/logout flow (now with PKCE) and script execution using the acquired token.
+*   **Testing:** Thoroughly test the login/logout flow (now with PKCE) and script execution using the acquired token *after* fixing the UI update issue.
 *   **Update Other Scripts:** Review other PowerShell scripts (`Package-MSI.ps1`, `Winget-InstallPackage.ps1`) for potential `-AccessToken` updates.
-*   **Frontend Status/Error Handling:** Improve frontend feedback for auth errors.
+*   **Frontend Status/Error Handling:** Improve frontend feedback for auth errors (including errors passed in URL params).
 *   **Deployment Logic:** Implement deployment orchestration.
 *   **Refine UI:** Continue UI refinements.
 *   **Security:** Use environment variables for secrets, restrict CORS for production.

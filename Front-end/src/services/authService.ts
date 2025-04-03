@@ -40,7 +40,14 @@ export const authService = {
  * @returns This function now redirects the browser and doesn't return a Promise in the traditional sense.
  */
   login(_tenantId?: string, _clientId?: string): void {
-    console.log('[authService] login called. Redirecting to backend for authentication.');
+    console.log('[authService] login called. Setting flag and redirecting to backend for authentication.');
+    // Set a flag to indicate authentication is in progress, used on return
+    try {
+      sessionStorage.setItem('auth_in_progress', 'true');
+    } catch (e) {
+      console.error("Failed to set sessionStorage flag:", e);
+      // Proceed with redirect even if sessionStorage fails, but the loading indicator might not work
+    }
     // Redirect the browser to the backend endpoint that starts the OAuth flow
     window.location.href = `${API_BASE_URL}/auth/login`;
     // Note: No promise is returned as the page navigates away.
