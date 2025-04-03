@@ -7,15 +7,7 @@
 import { API_BASE_URL } from '../config';
 // MSAL imports are removed as the primary interaction is now redirect-based via the backend
 
-/**
- * Response interface for authentication operations (login/logout) - Primarily for logout confirmation now.
- */
-interface AuthResponse {
-  success: boolean;      // Whether the operation completed successfully
-  tenantId?: string;     // The ID of the connected tenant (for login)
-  message?: string;      // Optional success/info message from the backend
-  error?: string;        // Error message if the operation failed
-}
+// Removed unused AuthResponse interface
 
 /**
  * Response interface for PowerShell command execution

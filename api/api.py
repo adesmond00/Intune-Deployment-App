@@ -22,13 +22,14 @@ from typing import List, Optional, Any
 import uvicorn
 from winget import search_applications
 from middleware import cors_middleware_config
-from powershell_session import powershell_session_manager, cleanup_powershell_session, SESSION_TIMEOUT_MINUTES
+# Removed import from powershell_session as it's deprecated
 import asyncio
 import httpx # For making HTTP requests in the backend
 from itsdangerous import URLSafeTimedSerializer # For signed cookies/state
 import uuid # For generating state
 import urllib.parse # For URL encoding
 import json # Added for parsing JSON output from scripts
+import os # Added for path operations
 
 # --- Azure AD Configuration (Replace with your actual values) ---
 # It's strongly recommended to use environment variables or a secure config management system
@@ -82,8 +83,9 @@ app.add_middleware(**cors_middleware_config)
 # Register cleanup function on shutdown
 @app.on_event("shutdown")
 async def shutdown_event():
-    # Still cleanup the old session manager if it exists, although it's not used for auth anymore
-    await cleanup_powershell_session()
+    # No specific cleanup needed here anymore for the deprecated session manager
+    print("Application shutdown.")
+    pass
 
 # Data Models
 class Deployment(BaseModel):
