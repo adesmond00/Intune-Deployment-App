@@ -20,8 +20,11 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional, Any
 import uvicorn
-from winget import search_applications
-from middleware import cors_middleware_config
+from contextlib import asynccontextmanager # Added for lifespan
+import os # Keep os import
+# Removed sys import and sys.path modification
+from .winget import search_applications # Back to relative import
+from .middleware import cors_middleware_config # Back to relative import
 # Removed import from powershell_session as it's deprecated
 import asyncio
 import httpx # For making HTTP requests in the backend
@@ -70,22 +73,29 @@ if AZURE_CLIENT_ID == "YOUR_CLIENT_ID_HERE" or \
     print("Consider using environment variables for security.")
 
 
-# Initialize FastAPI application with metadata
+# --- Lifespan Management ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Code to run on startup can go here
+    print("Application startup.")
+    yield
+    # Code to run on shutdown
+    print("Application shutdown.")
+    # If any cleanup from the old powershell_session was needed, it would go here.
+    # For now, just printing.
+
+# Initialize FastAPI application with metadata and lifespan manager
 app = FastAPI(
     title="Intune Deployment Toolkit API",
-    description="API for managing Intune deployments and configurations with persistent PowerShell session",
-    version="1.1.0"
+    description="API for managing Intune deployments and configurations (OAuth Flow)",
+    version="1.1.0", # Consider bumping version if changes are significant
+    lifespan=lifespan
 )
 
 # Apply CORS middleware using the imported configuration
 app.add_middleware(**cors_middleware_config)
 
-# Register cleanup function on shutdown
-@app.on_event("shutdown")
-async def shutdown_event():
-    # No specific cleanup needed here anymore for the deprecated session manager
-    print("Application shutdown.")
-    pass
+# Removed deprecated @app.on_event("shutdown")
 
 # Data Models
 class Deployment(BaseModel):
