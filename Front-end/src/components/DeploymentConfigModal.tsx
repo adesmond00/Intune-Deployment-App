@@ -136,14 +136,30 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
       {/* Modal Content - Added dark mode background */}
       <div className="relative w-full max-w-4xl bg-white dark:bg-gray-800 rounded-lg shadow-xl flex flex-col" style={{ maxHeight: '90vh' }}>
 
-        {/* Modal Header - Added dark mode border, text */}
+        {/* Modal Header - Added dark mode border, text - Added Advanced Settings Toggle */}
         <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Configure App Deployments ({appsToConfigure.length} apps)
           </h3>
+          {/* --- Advanced Settings Toggle --- */}
+          <div className="flex items-center space-x-2">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Show Advanced</span>
+              <button
+                type="button" // Prevent form submission
+                onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${showAdvancedSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                aria-checked={showAdvancedSettings}
+                role="switch"
+                disabled={isCurrentAppLocked} // Disable if locked
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${showAdvancedSettings ? 'translate-x-5' : ''}`}
+                ></div>
+              </button>
+          </div>
           <button
             onClick={onClose}
-            className="text-gray-400 bg-transparent hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-white rounded-lg text-sm p-1.5 ml-auto inline-flex items-center"
+            className="text-gray-400 bg-transparent hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-white rounded-lg text-sm p-1.5 ml-auto inline-flex items-center pl-4" // Added padding left
             aria-label="Close modal"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"></path></svg>
@@ -267,64 +283,6 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     <p className="text-sm"><span className="font-semibold">Version:</span> {currentApp.version}</p>
                  </div>
 
-                 {/* --- Advanced Settings Toggle --- */}
-                 <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Show Advanced Settings</span>
-                        {/* Basic Toggle Switch Styling */}
-                        <button
-                          type="button" // Prevent form submission
-                          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                          className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${showAdvancedSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                          aria-checked={showAdvancedSettings}
-                          role="switch"
-                          disabled={isCurrentAppLocked} // Disable if locked
-                        >
-                          <div
-                            className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${showAdvancedSettings ? 'translate-x-5' : ''}`}
-                          ></div>
-                        </button>
-                    </div>
-                 </div>
-
-                 {/* Conditionally Render Advanced Settings (Command Lines) */}
-                 {showAdvancedSettings && (
-                    <div className="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 space-y-4">
-                      <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Command Lines (Read-Only)</h5>
-                      <div>
-                        <label htmlFor={`installCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Install Command Line</label>
-                        <textarea
-                          readOnly
-                          id={`installCommandLine-${currentApp.id}`}
-                          rows={2}
-                          value={currentApp.installCommandLine || ''}
-                          className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`uninstallCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Uninstall Command Line</label>
-                        <textarea
-                          readOnly
-                          id={`uninstallCommandLine-${currentApp.id}`}
-                          rows={2}
-                          value={currentApp.uninstallCommandLine || ''}
-                          className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
-                        />
-                      </div>
-                    </div>
-                 )}
-
-                {/* --- Skipped Fields Placeholders - Added dark mode text color --- */}
-                <div className="pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Configuration To Be Added Later:</p>
-                    <ul className="list-disc list-inside text-sm text-gray-500 dark:text-gray-400 space-y-1">
-                        <li>Detection Rules (Structured Input)</li>
-                        <li>Requirement Rules (Structured Input)</li>
-                    </ul>
-                </div>
-                 {/* --- End Skipped Fields --- */}
-
-
                  {/* --- PowerShell Detection Script --- */}
                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
                     <label htmlFor={`detectionScript-${currentApp.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -382,28 +340,30 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     <div className="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 space-y-4">
                       <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Advanced Configuration</h5>
 
-                      {/* Command Lines */}
+                      {/* Command Lines - Now Editable */}
                       <div>
-                        <h6 className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Command Lines (Read-Only)</h6>
+                        <h6 className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Command Lines</h6>
                         <div className="space-y-2">
                             <div>
                                 <label htmlFor={`installCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Install Command Line</label>
                                 <textarea
-                                readOnly
-                                id={`installCommandLine-${currentApp.id}`}
-                                rows={2}
-                                value={currentApp.installCommandLine || ''}
-                                className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
+                                  id={`installCommandLine-${currentApp.id}`}
+                                  rows={2}
+                                  value={currentApp.installCommandLine || ''}
+                                  onChange={(e) => handleInputChange('installCommandLine', e.target.value)} // Assuming installCommandLine is added to StagedAppDeploymentInfo
+                                  disabled={isCurrentAppLocked} // Disable if locked
+                                  className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-600 font-mono text-xs text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-500 disabled:cursor-not-allowed"
                                 />
                             </div>
                             <div>
                                 <label htmlFor={`uninstallCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Uninstall Command Line</label>
                                 <textarea
-                                readOnly
-                                id={`uninstallCommandLine-${currentApp.id}`}
-                                rows={2}
-                                value={currentApp.uninstallCommandLine || ''}
-                                className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
+                                  id={`uninstallCommandLine-${currentApp.id}`}
+                                  rows={2}
+                                  value={currentApp.uninstallCommandLine || ''}
+                                  onChange={(e) => handleInputChange('uninstallCommandLine', e.target.value)} // Assuming uninstallCommandLine is added to StagedAppDeploymentInfo
+                                  disabled={isCurrentAppLocked} // Disable if locked
+                                  className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-600 font-mono text-xs text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-500 disabled:cursor-not-allowed"
                                 />
                             </div>
                         </div>
