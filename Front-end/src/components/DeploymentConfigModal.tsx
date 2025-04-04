@@ -13,6 +13,7 @@ import { StagedAppDeploymentInfo } from '../pages/WingetAppPage';
 
 // Import CodeMirror 5 components and styles
 import { Controlled as CodeMirror } from 'react-codemirror2';
+import { v4 as uuidv4 } from 'uuid';
 import 'codemirror/lib/codemirror.css';
 import 'codemirror/theme/material.css'; // Or choose another theme
 import 'codemirror/mode/powershell/powershell'; // Import PowerShell mode
@@ -292,7 +293,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     {/* Fixed CodeMirror implementation to ensure only one instance is rendered */}
                     <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden" style={{ minHeight: "150px" }}>
                       <CodeMirror
-                        key={`codemirror-${currentApp?.id || 'default'}`} // Add key to ensure proper re-rendering
+                        key={`codemirror-${uuidv4()}`} // Unique key for each instance
                         value={detectionScript}
                         options={{
                           mode: 'powershell',
@@ -304,8 +305,6 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                         }}
                         onBeforeChange={handleScriptChange}
                         editorDidMount={(editor) => {
-                          // Set explicit height to prevent duplicate rendering issues
-                          editor.setSize(null, 150);
                           // Force a refresh to ensure proper rendering
                           setTimeout(() => editor.refresh(), 50);
                         }}
