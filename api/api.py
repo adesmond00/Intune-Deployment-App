@@ -246,8 +246,8 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         "code": code,
         "redirect_uri": AZURE_REDIRECT_URI,
         "grant_type": "authorization_code",
-        "client_secret": AZURE_CLIENT_SECRET  # Only use client secret for confidential clients
-        # "code_verifier": code_verifier  # PKCE code verifier - commented out for confidential client flow
+        "client_secret": AZURE_CLIENT_SECRET,  # Required for confidential clients
+        "code_verifier": code_verifier  # Required for PKCE flow
     }
     
     async with httpx.AsyncClient() as client:
