@@ -10,6 +10,7 @@
 import React, { useState } from 'react';
 import { API_BASE_URL } from '../config'; // Import the configurable API base URL
 import DeploymentConfigModal from '../components/DeploymentConfigModal'; // Import the modal component
+import { deployAppsToIntune } from '../services/deploymentService';
 
 /**
  * Interface representing the structure of a Winget application object
@@ -63,6 +64,9 @@ const WingetAppPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState<boolean>(false);
+  const [isDeploying, setIsDeploying] = useState<boolean>(false);
+  const [deploymentProgress, setDeploymentProgress] = useState<number>(0);
+  const [deploymentError, setDeploymentError] = useState<string | null>(null);
 
   const handleSearch = async () => {
     if (!searchTerm.trim()) {
@@ -154,11 +158,34 @@ const WingetAppPage: React.FC = () => {
   // Determine if the "Publish All" button should be enabled
   const canPublishAll = stagedApps.length > 0 && stagedApps.every(app => app.isLocked);
 
-  // Placeholder function for the actual publish action
-  const handlePublishAll = () => {
-    console.log("Publishing all locked apps...", stagedApps.filter(app => app.isLocked));
-    // TODO: Implement API call to backend to trigger deployment
-    alert(`Publishing ${stagedApps.filter(app => app.isLocked).length} app(s)... (Implementation pending)`);
+  // Updated function to handle deployment
+  const handlePublishAll = async () => {
+    if (!canPublishAll) return;
+
+    setIsDeploying(true);
+    setDeploymentError(null);
+    setDeploymentProgress(0);
+
+    try {
+      const results = await deployAppsToIntune(stagedApps, (progress) => {
+        setDeploymentProgress((progress.completed / progress.total) * 100);
+      });
+
+      // Check for any failures
+      const failures = results.filter(result => !result.success);
+      if (failures.length > 0) {
+        const errorMessages = failures.map(f => `Failed to deploy ${f.appId}: ${f.error}`).join('\n');
+        setDeploymentError(`Some apps failed to deploy:\n${errorMessages}`);
+      } else {
+        // All apps deployed successfully
+        setStagedApps([]); // Clear staged apps on success
+        setDeploymentError(null);
+      }
+    } catch (error) {
+      setDeploymentError(error instanceof Error ? error.message : 'An unknown error occurred during deployment');
+    } finally {
+      setIsDeploying(false);
+    }
   };
 
 
@@ -234,6 +261,29 @@ const WingetAppPage: React.FC = () => {
         {/* Apply dark mode background and text color */}
         <div className="w-full md:w-1/3 bg-white dark:bg-gray-800 p-4 rounded shadow">
           <h2 className="text-xl font-medium mb-3 text-gray-900 dark:text-gray-100">Apps to Deploy ({stagedApps.length})</h2>
+          
+          {/* Deployment Progress */}
+          {isDeploying && (
+            <div className="mb-4">
+              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                  style={{ width: `${deploymentProgress}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Deploying apps... {Math.round(deploymentProgress)}%
+              </p>
+            </div>
+          )}
+
+          {/* Deployment Error */}
+          {deploymentError && (
+            <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded">
+              {deploymentError}
+            </div>
+          )}
+
           {stagedApps.length === 0 ? (
             <p className="text-gray-500 dark:text-gray-400 italic">No apps added yet. Use the search results to add apps here.</p>
           ) : (
@@ -264,20 +314,20 @@ const WingetAppPage: React.FC = () => {
           <div className="mt-4 space-y-2">
             {stagedApps.length > 0 && (
               <button
-                  onClick={() => setIsConfigModalOpen(true)}
-                  className="w-full px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 dark:focus:ring-offset-gray-800"
+                onClick={() => setIsConfigModalOpen(true)}
+                className="w-full px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 dark:focus:ring-offset-gray-800"
               >
-                  Configure Staged Apps ({stagedApps.length})
+                Configure Staged Apps ({stagedApps.length})
               </button>
             )}
             {/* Publish All Button */}
             <button
               onClick={handlePublishAll}
-              disabled={!canPublishAll}
+              disabled={!canPublishAll || isDeploying}
               className="w-full px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 dark:focus:ring-offset-gray-800 disabled:bg-gray-400 dark:disabled:bg-gray-500 disabled:cursor-not-allowed"
               title={!canPublishAll ? "All apps must be locked before publishing" : "Publish all locked apps to Intune"}
             >
-              Publish All Locked Apps to Intune
+              {isDeploying ? 'Deploying...' : 'Publish All Locked Apps to Intune'}
             </button>
           </div>
         </div>
@@ -289,7 +339,7 @@ const WingetAppPage: React.FC = () => {
         onClose={() => setIsConfigModalOpen(false)}
         appsToConfigure={stagedApps}
         onUpdateApp={handleUpdateStagedApp}
-        onToggleLock={handleToggleLock} // Pass the handler function
+        onToggleLock={handleToggleLock}
       />
     </div>
   );
