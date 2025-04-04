@@ -41,7 +41,7 @@ import base64 # For PKCE
 # instead of hardcoding these, especially the client secret.
 AZURE_CLIENT_ID = "YOUR_CLIENT_ID_HERE"
 AZURE_TENANT_ID = "YOUR_TENANT_ID_HERE"
-AZURE_CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"
+AZURE_CLIENT_SECRET = "YOUR_CLIENT_SECRET_HERE"  # Required for confidential client
 # The redirect URI configured in your Azure AD App Registration (Points to THIS backend)
 AZURE_REDIRECT_URI = "http://localhost:8000/auth/callback" # Make sure this matches Azure AD
 # Frontend URL configuration (Where the user UI runs)
@@ -71,10 +71,9 @@ COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60 # 7 days for refresh token persistence
 
 # Check if placeholders are still present (basic check)
 if AZURE_CLIENT_ID == "YOUR_CLIENT_ID_HERE" or \
-   AZURE_TENANT_ID == "YOUR_TENANT_ID_HERE" or \
-   AZURE_CLIENT_SECRET == "YOUR_CLIENT_SECRET_HERE":
+   AZURE_TENANT_ID == "YOUR_TENANT_ID_HERE":
     print("WARNING: Azure AD configuration placeholders detected in api/api.py.")
-    print("Replace YOUR_CLIENT_ID_HERE, YOUR_TENANT_ID_HERE, and YOUR_CLIENT_SECRET_HERE.")
+    print("Replace YOUR_CLIENT_ID_HERE and YOUR_TENANT_ID_HERE.")
     print("Consider using environment variables for security.")
 
 
@@ -159,15 +158,19 @@ async def auth_login(request: Request, response: Response):
     Generates a state parameter, stores it in a cookie, and redirects the user
     to the Microsoft identity platform authorization endpoint.
     """
-    # Generate state and PKCE parameters
+    # Generate state parameter
     state = str(uuid.uuid4())
-    code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=').decode('utf-8')
-    code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode('utf-8')).digest()).rstrip(b'=').decode('utf-8')
     
-    # Store state and code_verifier in the cookie payload
-    state_payload = {"state": state, "pkce_verifier": code_verifier}
+    # PKCE Implementation (commented out for confidential client flow)
+    # code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=').decode('utf-8')
+    # code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode('utf-8')).digest()).rstrip(b'=').decode('utf-8')
+    
+    # Store state in the cookie payload
+    state_payload = {"state": state}
+    # PKCE Implementation (commented out for confidential client flow)
+    # state_payload = {"state": state, "pkce_verifier": code_verifier}
 
-    # Construct the authorization URL with PKCE parameters
+    # Construct the authorization URL
     authorization_url = (
         f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/authorize?"
         + urllib.parse.urlencode({
@@ -176,23 +179,24 @@ async def auth_login(request: Request, response: Response):
             "redirect_uri": AZURE_REDIRECT_URI,
             "response_mode": "query",
             "scope": " ".join(AZURE_SCOPES),
-            "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256", # Using SHA256
+            "state": state
+            # PKCE Implementation (commented out for confidential client flow)
+            # "code_challenge": code_challenge,
+            # "code_challenge_method": "S256"  # Using SHA256
         })
     )
     
     # Create a redirect response
     redirect_response = RedirectResponse(url=authorization_url, status_code=302)
     
-    # Set the state payload (including verifier) in a temporary, signed cookie
+    # Set the state payload in a temporary, signed cookie
     redirect_response.set_cookie(
         key=STATE_COOKIE_NAME,
-        value=serializer.dumps(state_payload), # Sign the combined state and verifier
+        value=serializer.dumps(state_payload),
         max_age=600, # State cookie valid for 10 minutes
         httponly=True,
-        samesite="lax", # Lax is usually sufficient for OAuth redirects
-        secure=request.url.scheme == "https", # Use secure cookies if served over HTTPS
+        samesite="lax",
+        secure=request.url.scheme == "https"
     )
 
     print(f"Redirecting to Microsoft login: {authorization_url}") # Debug log
@@ -210,12 +214,9 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
     # Check for errors from Microsoft
     if error:
         print(f"Error during authentication: {error} - {error_description}")
-        # Redirect to a frontend error page or show an error
-        # For simplicity, redirecting back to root with error query params
         error_params = urllib.parse.urlencode({"auth_error": error, "auth_error_desc": error_description})
-        # Redirect to frontend base URL with error parameters
         frontend_error_url = f"{FRONTEND_BASE_URL}/?{error_params}"
-        return RedirectResponse(url=frontend_error_url) # Redirect to frontend with error
+        return RedirectResponse(url=frontend_error_url)
 
     # Retrieve the state from the cookie
     state_cookie = request.cookies.get(STATE_COOKIE_NAME)
@@ -223,16 +224,18 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         raise HTTPException(status_code=400, detail="State cookie missing.")
 
     try:
-        # Load the state payload (which includes the verifier)
-        state_payload = serializer.loads(state_cookie, max_age=600) # Use same max_age as set
+        # Load the state payload
+        state_payload = serializer.loads(state_cookie, max_age=600)
         original_state = state_payload.get("state")
-        code_verifier = state_payload.get("pkce_verifier")
+        # PKCE Implementation (commented out for confidential client flow)
+        # code_verifier = state_payload.get("pkce_verifier")
 
         # Verify the state parameter matches the state value in the cookie
         if original_state != state:
             raise HTTPException(status_code=400, detail="Invalid state parameter.")
-        if not code_verifier:
-             raise HTTPException(status_code=400, detail="Missing PKCE verifier in state cookie.")
+        # PKCE Implementation (commented out for confidential client flow)
+        # if not code_verifier:
+        #     raise HTTPException(status_code=400, detail="Missing PKCE verifier in state cookie.")
 
     except Exception as e:
         print(f"State validation failed: {e}")
@@ -246,15 +249,17 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         "code": code,
         "redirect_uri": AZURE_REDIRECT_URI,
         "grant_type": "authorization_code",
-        "code_verifier": code_verifier  # Required for PKCE flow
+        "client_secret": AZURE_CLIENT_SECRET  # Required for confidential client
+        # PKCE Implementation (commented out for confidential client flow)
+        # "code_verifier": code_verifier  # Required for PKCE flow
     }
     
     async with httpx.AsyncClient() as client:
         try:
             token_response = await client.post(token_url, data=token_data)
-            token_response.raise_for_status() # Raise exception for 4xx/5xx responses
+            token_response.raise_for_status()
             tokens = token_response.json()
-            print("Tokens received successfully.") # Debug log
+            print("Tokens received successfully.")
         except httpx.HTTPStatusError as e:
             print(f"Token exchange failed: {e.response.status_code} - {e.response.text}")
             raise HTTPException(status_code=500, detail=f"Failed to exchange code for token: {e.response.text}")
