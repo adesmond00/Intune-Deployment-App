@@ -557,71 +557,71 @@ async def execute_script(script_request: ScriptExecutionRequest, session: dict =
         script_path = os.path.join(script_dir, '..', 'scripts', script_request.command) # Go up one level to project root, then into scripts
 
         if not os.path.isfile(script_path):
-             raise FileNotFoundError(f"Script file not found at calculated path: {script_path}")
+            raise FileNotFoundError(f"Script file not found at calculated path: {script_path}")
 
-         # Construct parameters - MUST include passing the token securely
-         params_list = []
-         script_params = script_request.parameters or {}
+        # Construct parameters - MUST include passing the token securely
+        params_list = []
+        script_params = script_request.parameters or {}
 
-         # Special handling for rules if calling Add-App-to-Intune.ps1
-         if script_request.command == "Add-App-to-Intune.ps1":
-             all_rules = [] # Initialize empty list for combined rules
+        # Special handling for rules if calling Add-App-to-Intune.ps1
+        if script_request.command == "Add-App-to-Intune.ps1":
+            all_rules = [] # Initialize empty list for combined rules
 
-             # Process PowerShell Detection Script Rule
-             detection_script_content = script_params.pop('DetectionScriptContent', None)
-             run_as_32bit = script_params.pop('RunDetectionScriptAs32Bit', True) # Default true (32-bit)
+            # Process PowerShell Detection Script Rule
+            detection_script_content = script_params.pop('DetectionScriptContent', None)
+            run_as_32bit = script_params.pop('RunDetectionScriptAs32Bit', True) # Default true (32-bit)
 
-             if detection_script_content:
-                 # Base64 encode the script content
-                 encoded_script = base64.b64encode(detection_script_content.encode('utf-8')).decode('utf-8')
-                 detection_rule = {
-                     "@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptDetection",
-                     "scriptContent": encoded_script,
-                     "runAs32Bit": run_as_32bit
-                 }
-                 all_rules.append(detection_rule)
-                 print(f"Formatted PowerShell detection rule (runAs32Bit={run_as_32bit})") # Debug log
+            if detection_script_content:
+                # Base64 encode the script content
+                encoded_script = base64.b64encode(detection_script_content.encode('utf-8')).decode('utf-8')
+                detection_rule = {
+                    "@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptDetection",
+                    "scriptContent": encoded_script,
+                    "runAs32Bit": run_as_32bit
+                }
+                all_rules.append(detection_rule)
+                print(f"Formatted PowerShell detection rule (runAs32Bit={run_as_32bit})") # Debug log
 
-             # Process Requirement Rules (assuming frontend sends them as a list of dicts)
-             requirement_rules = script_params.pop('RequirementRules', [])
-             if requirement_rules and isinstance(requirement_rules, list):
-                 # Assume the list already contains correctly structured rule objects
-                 all_rules.extend(requirement_rules)
-                 print(f"Added {len(requirement_rules)} requirement rules.") # Debug log
-             elif requirement_rules:
-                 print("Warning: RequirementRules parameter received but was not a list.")
-
-
-             # Add the combined rules list as a single JSON string parameter for PowerShell
-             if all_rules:
-                 # Rename parameter to -Rules for the updated script
-                 params_list.extend(["-Rules", f"'{json.dumps(all_rules)}'"])
-                 print(f"Passing combined rules: {json.dumps(all_rules)}") # Debug log
-             else:
-                 # Pass an empty array if no rules were defined
-                 params_list.extend(["-Rules", "'@()'"]) # PowerShell empty array literal
+            # Process Requirement Rules (assuming frontend sends them as a list of dicts)
+            requirement_rules = script_params.pop('RequirementRules', [])
+            if requirement_rules and isinstance(requirement_rules, list):
+                # Assume the list already contains correctly structured rule objects
+                all_rules.extend(requirement_rules)
+                print(f"Added {len(requirement_rules)} requirement rules.") # Debug log
+            elif requirement_rules:
+                print("Warning: RequirementRules parameter received but was not a list.")
 
 
-         # Handle remaining standard parameters
-         if script_params:
-             for k, v in script_params.items():
-                 # Basic quoting for safety, might need refinement based on script needs
-                 # Handle boolean values specifically for PowerShell $true/$false
-                 if isinstance(v, bool):
-                     ps_bool = "$true" if v else "$false"
-                     params_list.extend([f"-{k}", ps_bool])
-                 elif isinstance(v, (int, float)):
-                      params_list.extend([f"-{k}", str(v)]) # Numbers don't need quotes
-                 elif v is None:
-                      params_list.extend([f"-{k}", "$null"]) # Pass PowerShell $null
-                 else:
-                     # Quote other string values
-                     safe_v = str(v).replace("'", "''") # Escape single quotes for PS
-                     params_list.extend([f"-{k}", f"'{safe_v}'"])
+            # Add the combined rules list as a single JSON string parameter for PowerShell
+            if all_rules:
+                # Rename parameter to -Rules for the updated script
+                params_list.extend(["-Rules", f"'{json.dumps(all_rules)}'"])
+                print(f"Passing combined rules: {json.dumps(all_rules)}") # Debug log
+            else:
+                # Pass an empty array if no rules were defined
+                params_list.extend(["-Rules", "'@()'"]) # PowerShell empty array literal
 
 
-         # Add the access token parameter
-         # Pass token securely - avoid command line if possible, consider stdin or temp file
+        # Handle remaining standard parameters
+        if script_params:
+            for k, v in script_params.items():
+                # Basic quoting for safety, might need refinement based on script needs
+                # Handle boolean values specifically for PowerShell $true/$false
+                if isinstance(v, bool):
+                    ps_bool = "$true" if v else "$false"
+                    params_list.extend([f"-{k}", ps_bool])
+                elif isinstance(v, (int, float)):
+                     params_list.extend([f"-{k}", str(v)]) # Numbers don't need quotes
+                elif v is None:
+                     params_list.extend([f"-{k}", "$null"]) # Pass PowerShell $null
+                else:
+                    # Quote other string values
+                    safe_v = str(v).replace("'", "''") # Escape single quotes for PS
+                    params_list.extend([f"-{k}", f"'{safe_v}'"])
+
+
+        # Add the access token parameter
+        # Pass token securely - avoid command line if possible, consider stdin or temp file
         # For now, passing via command line argument as placeholder
         params_list.extend(["-AccessToken", access_token]) # Assuming script accepts -AccessToken
 
