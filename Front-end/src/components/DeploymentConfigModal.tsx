@@ -13,7 +13,6 @@ import { StagedAppDeploymentInfo } from '../pages/WingetAppPage';
 
 // Import CodeMirror 5 components and styles
 import { Controlled as CodeMirror } from 'react-codemirror2';
-import { v4 as uuidv4 } from 'uuid';
 import 'codemirror/lib/codemirror.css';
 import 'codemirror/theme/material.css'; // Or choose another theme
 import 'codemirror/mode/powershell/powershell'; // Import PowerShell mode
