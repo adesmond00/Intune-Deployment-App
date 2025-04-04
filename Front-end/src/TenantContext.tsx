@@ -107,46 +107,31 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
     setIsConnecting(true);
     
     console.log(`Attempting to connect ${id ? `to tenant ${id}`: 'interactively'}...`);
-    const result = await authService.login(id);
-    console.log("Connection attempt result:", result);
-
-    if (result.success && result.tenantId) {
-      setIsSessionActive(true);
-      setTenantId(result.tenantId);
-      setConnectionMessage(result.message || 'Connected successfully!');
-      localStorage.setItem('tenantId', result.tenantId);
-    } else {
-      // Ensure state reflects failure
-      setIsSessionActive(false);
-      setTenantId(null);
-      setConnectionError(result.error || 'Failed to connect. Unknown error.');
-      localStorage.removeItem('tenantId');
+    try {
+      authService.login(id);
+      // The page will redirect, so we don't need to handle the result here
+      // The status check will update the state when the user returns
+    } catch (error) {
+      setIsConnecting(false);
+      setConnectionError('Failed to initiate connection process');
     }
-    setIsConnecting(false);
   };
 
   // Function to disconnect from the tenant
   const disconnect = async () => {
     clearError();
     clearMessage();
-    setIsConnecting(true); // Use isConnecting to indicate activity
+    setIsConnecting(true);
     
     console.log("Attempting to disconnect...");
-    const result = await authService.logout();
-    console.log("Disconnection attempt result:", result);
-
-    if (!result.success) {
-      // Still proceed with clearing frontend state, but show error
-      setConnectionError(result.error || 'Failed to disconnect cleanly on the backend.');
-    } else {
-       setConnectionMessage(result.message || 'Disconnected successfully.');
+    try {
+      authService.logout();
+      // The page will redirect, so we don't need to handle the result here
+      // The status check will update the state when the user returns
+    } catch (error) {
+      setIsConnecting(false);
+      setConnectionError('Failed to initiate logout process');
     }
-    
-    // Always clear frontend state regardless of backend result for logout
-    setIsSessionActive(false);
-    setTenantId(null);
-    localStorage.removeItem('tenantId');
-    setIsConnecting(false);
   };
 
   // Function to execute a command within the session
