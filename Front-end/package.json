@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@azure/msal-browser": "^4.8.0",
+    "codemirror": "^5.65.19",
     "react": "^18.2.0",
+    "react-codemirror2": "^8.0.1",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.4.1"
   },

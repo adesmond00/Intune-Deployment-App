@@ -565,18 +565,44 @@ async def execute_script(script_request: ScriptExecutionRequest, session: dict =
 
          # Special handling for rules if calling Add-App-to-Intune.ps1
          if script_request.command == "Add-App-to-Intune.ps1":
-             detection_rules = script_params.pop('DetectionRules', [])
+             all_rules = [] # Initialize empty list for combined rules
+
+             # Process PowerShell Detection Script Rule
+             detection_script_content = script_params.pop('DetectionScriptContent', None)
+             run_as_32bit = script_params.pop('RunDetectionScriptAs32Bit', True) # Default true (32-bit)
+
+             if detection_script_content:
+                 # Base64 encode the script content
+                 encoded_script = base64.b64encode(detection_script_content.encode('utf-8')).decode('utf-8')
+                 detection_rule = {
+                     "@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptDetection",
+                     "scriptContent": encoded_script,
+                     "runAs32Bit": run_as_32bit
+                 }
+                 all_rules.append(detection_rule)
+                 print(f"Formatted PowerShell detection rule (runAs32Bit={run_as_32bit})") # Debug log
+
+             # Process Requirement Rules (assuming frontend sends them as a list of dicts)
              requirement_rules = script_params.pop('RequirementRules', [])
+             if requirement_rules and isinstance(requirement_rules, list):
+                 # Assume the list already contains correctly structured rule objects
+                 all_rules.extend(requirement_rules)
+                 print(f"Added {len(requirement_rules)} requirement rules.") # Debug log
+             elif requirement_rules:
+                 print("Warning: RequirementRules parameter received but was not a list.")
 
-             # Convert rules to JSON strings for PowerShell to parse
-             # PowerShell's ConvertFrom-Json can handle JSON arrays passed as strings
-             if detection_rules:
-                 # Wrap the JSON string in single quotes for PowerShell
-                 params_list.extend(["-DetectionRules", f"'{json.dumps(detection_rules)}'"])
-             if requirement_rules:
-                 params_list.extend(["-RequirementRules", f"'{json.dumps(requirement_rules)}'"])
 
-         # Handle remaining parameters
+             # Add the combined rules list as a single JSON string parameter for PowerShell
+             if all_rules:
+                 # Rename parameter to -Rules for the updated script
+                 params_list.extend(["-Rules", f"'{json.dumps(all_rules)}'"])
+                 print(f"Passing combined rules: {json.dumps(all_rules)}") # Debug log
+             else:
+                 # Pass an empty array if no rules were defined
+                 params_list.extend(["-Rules", "'@()'"]) # PowerShell empty array literal
+
+
+         # Handle remaining standard parameters
          if script_params:
              for k, v in script_params.items():
                  # Basic quoting for safety, might need refinement based on script needs

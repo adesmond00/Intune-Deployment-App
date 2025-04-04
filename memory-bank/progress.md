@@ -4,7 +4,12 @@
 
 *   **Frontend Shell & Routing**: Basic React app structure with routing, sidebar, header, pages (`Dashboard`, `Applications`, `WingetApp`).
 *   **Winget Search/Staging UI**: `WingetAppPage` allows searching via backend API, displaying results, staging apps with auto-generated command lines, and opening configuration modal.
-*   **Deployment Configuration UI**: `DeploymentConfigModal` allows editing basic app parameters (`displayName`, `description`, etc.) with conditional display of command lines.
+*   **Deployment Configuration UI (`DeploymentConfigModal.tsx`)**:
+    *   Allows editing basic app parameters (`displayName`, `description`, etc.).
+    *   Includes CodeMirror 5 editor for custom PowerShell detection scripts with syntax highlighting.
+    *   Features "Advanced Settings" toggle.
+    *   Conditionally displays 32/64-bit toggle (default 32-bit) for detection script.
+    *   Conditionally displays Requirement Rules section (default Win10/x64, placeholder UI).
 *   **Dark Mode**: Functional dark mode toggle via `ThemeContext` and `SettingsModal`.
 *   **Backend API Foundation**: FastAPI app (`api/`) with CORS.
     *   `/winget-search`: Functional endpoint using `api/winget.py`.
@@ -20,10 +25,11 @@
         *   Passes the access token securely to the script via the `-AccessToken` parameter.
 *   **Winget Search Logic**: `api/winget.py` correctly parses `winget search` output.
 *   **PowerShell Scripts**:
-    *   `Add-App-to-Intune.ps1`: **Refactored** to use direct Microsoft Graph API calls (`Invoke-RestMethod`) with the provided `-AccessToken` for Win32 app deployment, bypassing the `IntuneWin32App` module. Accepts parameters including rules formatted as JSON strings. Outputs JSON result.
-    *   `Connect-to-Intune.ps1`: Checks/installs modules. Less relevant now as connection is handled by token passing to other scripts.
+    *   `Add-App-to-Intune.ps1`: Refactored to use direct Graph API calls. Accepts a single `-Rules` parameter (JSON string) containing combined detection/requirement rules. Parses rules using `ConvertFrom-Json`.
+    *   `Connect-to-Intune.ps1`: Checks/installs modules.
     *   `Winget-InstallPackage.ps1`: Robust script for winget install/uninstall (standalone).
-*   **Backend Parameter Handling**: `/execute-script` endpoint in `api/api.py` updated to correctly format parameters for `Add-App-to-Intune.ps1`, including converting detection/requirement rules to JSON strings.
+*   **Backend Parameter Handling**: `/execute-script` endpoint in `api/api.py` updated to process `DetectionScriptContent`, `RunDetectionScriptAs32Bit`, and `RequirementRules` from frontend. Constructs combined `Rules` list (with Base64 encoded script) and passes it as a JSON string to the `-Rules` parameter of `Add-App-to-Intune.ps1`.
+*   **Frontend Dependencies**: Installed `react-codemirror2` and `codemirror@^5.0.0`.
 *   **Configuration Placeholders**: Placeholders added for Azure AD details and session secret key in `api/api.py` and `Front-end/src/config.ts`.
 *   **Virtual Environment**: Backend dependencies installed in `api/.venv`.
 *   **Build/Run Fixes**: Corrected relative imports, simplified `__init__.py`, updated to FastAPI `lifespan` events, identified correct `uvicorn` command structure (run from project root, without `--reload` initially to diagnose).
@@ -32,13 +38,15 @@
 
 *   **Configuration Values**: **User MUST replace placeholder values** for `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, and `ITSANGEROUS_SECRET_KEY` in `api/api.py` and `Front-end/src/config.ts`.
 *   **Testing**:
-    *   The refactored deployment flow (`/execute-script` calling the updated `Add-App-to-Intune.ps1`) needs thorough testing via the UI/API to confirm the original 401 error is resolved.
-    *   The complete OAuth flow (login, logout, token refresh) requires testing *after* fixing the frontend UI update issue.
+    *   UI interactions in `DeploymentConfigModal.tsx` (advanced toggle, script input, 32/64 toggle visibility, requirement rules display).
+    *   Full deployment flow with custom PowerShell detection script and default requirement rules.
+    *   Complete OAuth flow (login, logout, token refresh) *after* fixing the frontend UI update issue.
 *   **Frontend Functionality**:
-    *   Deployment confirmation/triggering from `DeploymentConfigModal` is not implemented.
+    *   **Requirement Rule UI:** Implement actual UI controls (dropdowns, inputs) in `DeploymentConfigModal` to edit requirement rules.
+    *   **Data Submission:** Implement logic in `DeploymentConfigModal` to gather all configured data and trigger the backend `/execute-script` call.
     *   "Add an App with Scoop" and custom MSI/EXE features are not implemented.
     *   UI for deployment status/feedback needs implementation.
-    *   Improved handling of potential OAuth errors surfaced in URL query params after callback redirect (from Microsoft or backend).
+    *   Improved handling of potential OAuth errors.
 *   **Backend Orchestration Logic**: No high-level logic exists yet to orchestrate the full deployment workflow (staging -> packaging -> Intune creation).
 *   **Packaging Logic**: `scripts/Package-MSI.ps1` is incomplete (needs `New-IntuneWin32AppPackage` implementation and likely `-AccessToken` parameter).
 *   **PowerShell Script Updates**: Other scripts (`Package-MSI.ps1`) that interact with Intune need updating to accept and use the `-AccessToken` parameter. `Winget-InstallPackage.ps1` likely does not need changes unless it requires Intune interaction.

@@ -34,14 +34,14 @@ Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
 .PARAMETER RestartBehavior
     Defines the restart behavior ("suppress", "force", "basedOnReturnCode").
 
-.PARAMETER DetectionRules
-    An array of PowerShell custom objects representing the detection rules in Graph API format.
-    Example: @{ '@odata.type' = '#microsoft.graph.win32LobAppMsiInformation'; 'productCode' = '{GUID}' }
-    Example: @{ '@odata.type' = '#microsoft.graph.win32LobAppRegistryDetection'; 'check32BitOn64System' = $false; 'detectionType' = 'exists'; 'keyPath' = 'HKLM\Software\MyApp'; 'valueName' = 'Version' }
-
-.PARAMETER RequirementRules
-    An array of PowerShell custom objects representing the requirement rules in Graph API format.
-    Example: @{ '@odata.type' = '#microsoft.graph.win32LobAppRequirement'; 'operator' = 'greaterOrEqual'; 'detectionType' = 'version'; 'value' = '10.0.19041' } # Example for OS Version
+.PARAMETER Rules
+    (Optional) A JSON string representing an array of rule objects (detection and requirement) matching the Graph API schema.
+    The backend API constructs this string. Defaults to an empty array '[]'.
+    Example JSON string content:
+    '[
+      { "@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptDetection", "scriptContent": "BASE64...", "runAs32Bit": true },
+      { "@odata.type": "#microsoft.graph.win32LobAppRequirement", "operator": "greaterOrEqual", "detectionType": "version", "value": "10.0.10240" }
+    ]'
 
 .PARAMETER InstallCommandLine
     The command line used to install the application silently.
@@ -63,12 +63,7 @@ Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
         # productVersion = '...' # Optional
         # upgradeCode = '...' # Optional
     }
-    $requirementRule = [PSCustomObject]@{
-         '@odata.type' = '#microsoft.graph.win32LobAppRequirement'
-         operator = 'greaterOrEqual'
-         detectionType = 'version'
-         value = '10.0.19041' # Example for Windows 10 2004+
-    }
+    $rulesJson = '[{"@odata.type":"#microsoft.graph.win32LobAppPowerShellScriptDetection","scriptContent":"IyBQb3dlclNoZWxsIFNjcmlwdA0KDQpFeGl0IDANCg==","runAs32Bit":true},{"@odata.type":"#microsoft.graph.win32LobAppRequirement","operator":"greaterOrEqual","detectionType":"version","value":"10.0.10240"}]'
 
     Add-AppToIntune -AccessToken "YOUR_ACCESS_TOKEN" `
                     -IntuneWinFile "C:\Packages\7zip.intunewin" `
@@ -77,15 +72,14 @@ Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
                     -Publisher "Igor Pavlov" `
                     -InstallExperience "system" `
                     -RestartBehavior "suppress" `
-                    -DetectionRules @($detectionRule) `
-                    -RequirementRules @($requirementRule) `
+                    -Rules $rulesJson `
                     -InstallCommandLine "msiexec /i 7zip.msi /qn" `
                     -UninstallCommandLine "msiexec /x {23170F69-40C1-2702-1900-000001000000} /qn"
 
 .NOTES
     - Requires a valid Microsoft Graph Access Token with DeviceManagementApps.ReadWrite.All permission.
     - File upload currently attempts a single PUT request, suitable for smaller files. Chunked upload is recommended for large files (>60MB).
-    - Detection and Requirement rules must be provided in the specific JSON structure expected by the Graph API, represented here as PowerShell custom objects.
+    - The -Rules parameter expects a JSON string representing an array of rule objects. The backend API is responsible for constructing this string correctly.
     - Error handling is basic; more robust checks on API responses might be needed.
 #>
 function Add-AppToIntune {
@@ -114,11 +108,8 @@ function Add-AppToIntune {
         [ValidateSet("suppress", "force", "basedOnReturnCode")]
         [string]$RestartBehavior = "suppress",
 
-        [Parameter(Mandatory = $true)]
-        [array]$DetectionRules, # Expecting array of PSCustomObjects matching Graph schema
-
-        [Parameter(Mandatory = $true)]
-        [array]$RequirementRules, # Expecting array of PSCustomObjects matching Graph schema
+        [Parameter(Mandatory = $false)] # Rules are technically optional in Graph
+        [string]$Rules = '[]', # Expecting JSON string from API, default to empty JSON array
 
         [Parameter(Mandatory = $true)]
         [string]$InstallCommandLine,
@@ -253,19 +244,20 @@ function Add-AppToIntune {
                 @{ returnCode = 1641; type = 'hardReboot' }
                 @{ returnCode = 1618; type = 'retry' }
             )
-            rules                   = @( # Combine detection and requirement rules
-                $DetectionRules # Assumes this is already an array of correct PSCustomObjects
-                $RequirementRules # Assumes this is already an array of correct PSCustomObjects
-            )
-        } | ConvertTo-Json -Depth 5 # Ensure sufficient depth for nested rules
+            # Parse the JSON string passed via -Rules parameter into PowerShell objects
+            rules                   = ($Rules | ConvertFrom-Json)
+        }
 
-        Write-Verbose "Patch Payload: $patchPayload"
+        # Convert the final payload, ensuring sufficient depth for nested rules
+        $patchPayloadJson = $patchPayload | ConvertTo-Json -Depth 5
+
+        Write-Verbose "Patch Payload JSON: $patchPayloadJson"
 
         # Use PATCH method for updates
         $patchHeaders = $headers.Clone() # Clone original headers
         $patchHeaders["Content-Type"] = "application/json" # Ensure content type is JSON
 
-        $updateResponse = Invoke-RestMethod -Uri $patchUrl -Method Patch -Headers $patchHeaders -Body $patchPayload -ErrorAction Stop
+        $updateResponse = Invoke-RestMethod -Uri $patchUrl -Method Patch -Headers $patchHeaders -Body $patchPayloadJson -ErrorAction Stop
         Write-Verbose "Successfully patched application object."
 
         # --- Success ---

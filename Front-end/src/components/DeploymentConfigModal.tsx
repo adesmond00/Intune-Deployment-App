@@ -3,12 +3,39 @@
  *
  * Provides a modal dialog interface for configuring deployment parameters
  * for applications staged from the Winget search results.
- * Features a side menu listing staged apps and a main area for configuring the selected app.
+ * Features a side menu listing staged apps and a main area for configuring the selected app,
+ * including a PowerShell detection script editor.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 // Import the interface from the page component
 // TODO: Consider moving shared interfaces to a dedicated types file (e.g., src/types.ts)
 import { StagedAppDeploymentInfo } from '../pages/WingetAppPage';
+
+// Import CodeMirror 5 components and styles
+import { Controlled as CodeMirror } from 'react-codemirror2';
+import 'codemirror/lib/codemirror.css';
+import 'codemirror/theme/material.css'; // Or choose another theme
+import 'codemirror/mode/powershell/powershell'; // Import PowerShell mode
+
+// Define types for rules (matching Graph API structure)
+interface Win32LobAppRule {
+  '@odata.type': string;
+  [key: string]: any; // Allow other properties
+}
+
+interface PowerShellDetectionRule extends Win32LobAppRule {
+  '@odata.type': '#microsoft.graph.win32LobAppPowerShellScriptDetection';
+  scriptContent: string; // Base64 encoded
+  runAs32Bit: boolean;
+}
+
+interface RequirementRule extends Win32LobAppRule {
+  '@odata.type': '#microsoft.graph.win32LobAppRequirement';
+  operator: 'greaterOrEqual' | 'equal' | 'lessOrEqual' | 'less' | 'greater' | 'notEqual'; // Example operators
+  detectionType: 'version' | 'architecture' | 'diskSpace' | 'ram'; // Example types
+  value: string;
+}
+
 
 /**
  * Props for the DeploymentConfigModal component.
@@ -29,10 +56,47 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
   onToggleLock, // Destructure the new prop
 }) => {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState<boolean>(false); // State for advanced settings toggle
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState<boolean>(false);
+  const [detectionScript, setDetectionScript] = useState<string>('');
+  const [runAs32Bit, setRunAs32Bit] = useState<boolean>(true); // Default to 32-bit as requested
+  const [requirementRules, setRequirementRules] = useState<RequirementRule[]>([]);
 
   // Get the lock status of the currently selected app
   const isCurrentAppLocked = appsToConfigure[selectedIndex]?.isLocked ?? false;
+
+  // Default Requirement Rules
+  const defaultRequirementRules: RequirementRule[] = [
+    {
+      '@odata.type': '#microsoft.graph.win32LobAppRequirement',
+      operator: 'greaterOrEqual',
+      detectionType: 'version',
+      value: '10.0.10240', // Windows 10 RTM
+    },
+    {
+      '@odata.type': '#microsoft.graph.win32LobAppRequirement',
+      operator: 'equal',
+      detectionType: 'architecture',
+      value: 'x64', // Default to x64 as requested
+    },
+  ];
+
+  // Initialize/Reset local state when modal opens or selected app changes
+  useEffect(() => {
+    if (isOpen && appsToConfigure.length > 0) {
+      // Reset local state for the newly selected/displayed app
+      // Initialize with defaults, as these are being configured here
+      setDetectionScript(''); // Start with empty script
+      setRunAs32Bit(true); // Default to 32-bit
+      setRequirementRules(defaultRequirementRules); // Start with default requirements
+      setShowAdvancedSettings(false); // Reset advanced view
+    } else if (!isOpen) {
+       // Reset state completely when modal closes
+       setDetectionScript('');
+       setRunAs32Bit(true);
+       setRequirementRules([]);
+       setShowAdvancedSettings(false);
+    }
+  }, [isOpen, selectedIndex, appsToConfigure]); // Rerun when modal opens or selection changes
 
   useEffect(() => {
     if (isOpen) {
@@ -43,7 +107,15 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
          setSelectedIndex(0);
       }
     }
-  }, [isOpen, appsToConfigure.length]);
+    // Removed dependency on appsToConfigure.length as it's covered by appsToConfigure
+  }, [isOpen, appsToConfigure]);
+
+  // Handler for CodeMirror changes
+  const handleScriptChange = useCallback((editor: any, data: any, value: string) => {
+    setDetectionScript(value);
+    // TODO: Propagate this change back if needed, but likely only on final submit
+  }, []);
+
 
   if (!isOpen) {
     return null;
@@ -255,6 +327,104 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     </ul>
                 </div>
                  {/* --- End Skipped Fields --- */}
+
+
+                 {/* --- PowerShell Detection Script --- */}
+                 <div className="pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
+                    <label htmlFor={`detectionScript-${currentApp.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        PowerShell Detection Script
+                    </label>
+                    <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden">
+                      <CodeMirror
+                        value={detectionScript}
+                        options={{
+                          mode: 'powershell',
+                          theme: 'material', // Make sure to import the theme CSS
+                          lineNumbers: true,
+                          readOnly: isCurrentAppLocked,
+                        }}
+                        onBeforeChange={handleScriptChange}
+                        editorDidMount={(editor) => {
+                            // You can access the editor instance here if needed
+                            // editor.setSize(null, 150); // Example: Set height
+                        }}
+                      />
+                    </div>
+                    {/* 32/64-bit Toggle - Conditionally Visible */}
+                    {showAdvancedSettings && (
+                        <div className="flex items-center justify-start mt-2 space-x-2 group">
+                            <button
+                              type="button"
+                              onClick={() => setRunAs32Bit(!runAs32Bit)}
+                              className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${runAs32Bit ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                              aria-checked={runAs32Bit}
+                              role="switch"
+                              disabled={isCurrentAppLocked}
+                            >
+                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${runAs32Bit ? 'translate-x-5' : ''}`}></div>
+                            </button>
+                            <span className="text-sm text-gray-700 dark:text-gray-300">
+                                Run script as {runAs32Bit ? '32-bit' : '64-bit'} process on 64-bit systems
+                            </span>
+                            {/* Info Tooltip */}
+                            <div className="relative flex items-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400 dark:text-gray-500 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 bg-black text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-10">
+                                    Determines if the PowerShell detection script should run in a 32-bit or 64-bit process on 64-bit systems. Default is 32-bit.
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                 </div>
+                 {/* --- End PowerShell Detection Script --- */}
+
+
+                 {/* Conditionally Render Advanced Settings (Command Lines & Requirement Rules) */}
+                 {showAdvancedSettings && (
+                    <div className="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 space-y-4">
+                      <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Advanced Configuration</h5>
+
+                      {/* Command Lines */}
+                      <div>
+                        <h6 className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Command Lines (Read-Only)</h6>
+                        <div className="space-y-2">
+                            <div>
+                                <label htmlFor={`installCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Install Command Line</label>
+                                <textarea
+                                readOnly
+                                id={`installCommandLine-${currentApp.id}`}
+                                rows={2}
+                                value={currentApp.installCommandLine || ''}
+                                className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor={`uninstallCommandLine-${currentApp.id}`} className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Uninstall Command Line</label>
+                                <textarea
+                                readOnly
+                                id={`uninstallCommandLine-${currentApp.id}`}
+                                rows={2}
+                                value={currentApp.uninstallCommandLine || ''}
+                                className="w-full p-2 border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-gray-100 dark:bg-gray-600 font-mono text-xs text-gray-700 dark:text-gray-200 cursor-not-allowed"
+                                />
+                            </div>
+                        </div>
+                      </div>
+
+                      {/* Requirement Rules */}
+                      <div className="pt-4 border-t border-gray-300 dark:border-gray-500">
+                         <h6 className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Requirement Rules</h6>
+                         {/* TODO: Implement actual inputs for requirement rules */}
+                         <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-600 p-2 rounded border border-gray-300 dark:border-gray-500">
+                            <pre>{JSON.stringify(requirementRules, null, 2)}</pre>
+                            <p className="mt-2 italic">(Placeholder: UI for editing rules to be added)</p>
+                         </div>
+                      </div>
+
+                    </div>
+                 )}
 
               </form>
             ) : (

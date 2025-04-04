@@ -2,6 +2,9 @@
 
 ## Frontend (`Front-end/`)
 *   **Framework/Library**: React (^18.2.0)
+*   **UI Components/Editors**:
+    *   `react-codemirror2`: Wrapper for CodeMirror 5 editor.
+    *   `codemirror`: Core CodeMirror 5 library (^5.0.0).
 *   **Language**: TypeScript (^5.0.2)
 *   **Build Tool**: Vite (^4.5.0)
 *   **Styling**: TailwindCSS (^3.3.3) with PostCSS (^8.4.31) and Autoprefixer (^10.4.14)
