@@ -246,7 +246,6 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
         "code": code,
         "redirect_uri": AZURE_REDIRECT_URI,
         "grant_type": "authorization_code",
-        "client_secret": AZURE_CLIENT_SECRET,  # Required for confidential clients
         "code_verifier": code_verifier  # Required for PKCE flow
     }
     
@@ -340,8 +339,7 @@ async def refresh_access_token(refresh_token: str) -> Optional[dict]:
         "client_id": AZURE_CLIENT_ID,
         "scope": " ".join(AZURE_SCOPES),
         "refresh_token": refresh_token,
-        "grant_type": "refresh_token",
-        "client_secret": AZURE_CLIENT_SECRET,
+        "grant_type": "refresh_token"
     }
 
     async with httpx.AsyncClient() as client:
