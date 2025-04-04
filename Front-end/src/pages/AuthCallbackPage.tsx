@@ -10,16 +10,15 @@ const AuthCallbackPage: React.FC = () => {
     const handleCallback = async () => {
       console.log('AuthCallbackPage: Running checkStatus...');
       try {
-        // Assuming checkStatus updates the context state internally
-        await checkStatus();
+        // Pass true to indicate this is a callback check
+        await checkStatus(true);
         console.log('AuthCallbackPage: checkStatus completed. Navigating to /');
         // Redirect to the main application page after status check
         navigate('/');
       } catch (error) {
         console.error('AuthCallbackPage: Error during checkStatus:', error);
         // Handle error appropriately - maybe navigate to an error page or show message
-        // For now, just log and navigate to root
-        navigate('/'); // Or navigate('/error') if you have an error page
+        navigate('/');
       }
     };
 

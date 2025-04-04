@@ -30,17 +30,23 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
   const [tenantId, setTenantId] = useState<string | null>(localStorage.getItem('tenantId'));
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [isPostRedirect, setIsPostRedirect] = useState<boolean>(false);
 
   const clearError = () => setConnectionError(null);
   const clearMessage = () => setConnectionMessage(null);
 
   // Check status on initial load and periodically
-  const checkStatus = useCallback(async () => {
-    // Don't check status if already connecting/disconnecting
+  const checkStatus = useCallback(async (isCallback: boolean = false) => {
+    // Set post-redirect flag if this is a callback check
+    if (isCallback) {
+      setIsPostRedirect(true);
+    }
+
+    // Don't check status if already connecting
     if (isConnecting) return;
     
     try {
-      console.log("Checking session status...");
+      console.log("Checking session status...", isCallback ? "(callback)" : "(periodic)");
       const status = await authService.getStatus();
       console.log("Status result:", status);
 
@@ -54,6 +60,11 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
         }
         setConnectionMessage("Successfully connected to Intune");
         clearError();
+        
+        // Clear post-redirect flag after successful connection
+        if (isCallback) {
+          setTimeout(() => setIsPostRedirect(false), 1000);
+        }
       } else {
         setIsSessionActive(false);
         setTenantId(null);
@@ -72,16 +83,26 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
 
   // Use useEffect for periodic status checks with debouncing
   useEffect(() => {
-    // Initial check
-    checkStatus();
+    // Skip periodic checks during post-redirect phase
+    if (isPostRedirect) {
+      console.log("Skipping periodic check during post-redirect phase");
+      return;
+    }
 
-    // Set up periodic checks with debouncing
+    // Initial check only if not in post-redirect
+    if (!isPostRedirect) {
+      checkStatus(false);
+    }
+
+    // Set up periodic checks
     const intervalId = setInterval(() => {
-      checkStatus();
+      if (!isPostRedirect) {
+        checkStatus(false);
+      }
     }, 10000); // Check every 10 seconds
 
     return () => clearInterval(intervalId);
-  }, [checkStatus]);
+  }, [checkStatus, isPostRedirect]);
 
   // Function to connect to a tenant
   const connect = async (id?: string) => {
