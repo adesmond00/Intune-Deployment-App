@@ -28,6 +28,10 @@ interface StatusResponse {
   error?: string;                     // Error message if status check failed
 }
 
+// Add rate limiting
+const RATE_LIMIT_DELAY = 5000; // 5 seconds between status checks
+let lastStatusCheck = 0;
+
 /**
  * Service object providing methods for Intune authentication and command execution
  */
@@ -69,28 +73,33 @@ export const authService = {
    * Checks the current status of the Intune connection
    * @returns Promise resolving to StatusResponse with current connection state
    */
-  async getStatus(): Promise<StatusResponse> {
+  async getStatus(): Promise<{ active: boolean; tenant_id?: string; access_token_expires_at?: number }> {
+    // Implement rate limiting
+    const now = Date.now();
+    if (now - lastStatusCheck < RATE_LIMIT_DELAY) {
+      throw new Error('Rate limit exceeded. Please wait before checking status again.');
+    }
+    lastStatusCheck = now;
+
     try {
       const response = await fetch(`${API_BASE_URL}/intune/status`, {
-        method: 'GET',
+        credentials: 'include', // Include cookies in the request
         headers: {
-          'Content-Type': 'application/json',
-        }
+          'Accept': 'application/json',
+        },
       });
 
       if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        if (response.status === 401) {
+          return { active: false };
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const result = await response.json();
-      return result as StatusResponse;
+      return await response.json();
     } catch (error) {
-      console.error('Failed to check authentication status:', error);
-      return { 
-          active: false, 
-          error: error instanceof Error ? error.message : 'Could not fetch status' 
-      };
+      console.error('Error checking status:', error);
+      return { active: false };
     }
   },
 

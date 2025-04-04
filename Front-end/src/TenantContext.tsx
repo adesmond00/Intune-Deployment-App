@@ -39,65 +39,51 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
     // Don't check status if already connecting/disconnecting
     if (isConnecting) return;
     
-    console.log("Checking session status...");
-    const status = await authService.getStatus();
-    console.log("Status result:", status);
+    try {
+      console.log("Checking session status...");
+      const status = await authService.getStatus();
+      console.log("Status result:", status);
 
-    // Compare fetched status with current state
-    const sessionBecameInactive = !status.active && isSessionActive;
-    const sessionBecameActive = status.active && !isSessionActive;
-    const tenantIdChanged = status.active && status.tenant_id !== tenantId;
-    const statusNeedsUpdate = sessionBecameInactive || sessionBecameActive || tenantIdChanged;
+      // Compare fetched status with current state
+      const sessionBecameInactive = !status.active && isSessionActive;
+      const sessionBecameActive = status.active && !isSessionActive;
+      const tenantIdChanged = status.active && status.tenant_id !== tenantId;
+      const statusNeedsUpdate = sessionBecameInactive || sessionBecameActive || tenantIdChanged;
 
-    if (statusNeedsUpdate) {
-        console.log(`Updating state: active=${status.active}, tenantId=${status.tenant_id}`);
+      if (statusNeedsUpdate) {
         setIsSessionActive(status.active);
-        const newTenantId = status.active ? status.tenant_id || null : null;
-        setTenantId(newTenantId);
-        
-        if (newTenantId) {
-            localStorage.setItem('tenantId', newTenantId);
-        } else {
-            localStorage.removeItem('tenantId');
-        }
-        
-        if(sessionBecameInactive) {
-            // If the session became inactive unexpectedly (timeout, backend restart)
-            setConnectionMessage("Session ended or timed out.");
-        }
-        // Clear any previous errors/messages if state is now consistent
         if (status.active) {
-            clearError();
-            clearMessage();
+          const newTenantId = status.tenant_id || null;
+          setTenantId(newTenantId);
+          if (newTenantId) {
+            localStorage.setItem('tenantId', newTenantId);
+          }
+        } else {
+          setTenantId(null);
+          localStorage.removeItem('tenantId');
         }
-    } else if (!status.active && !isSessionActive) {
-        // If both backend and frontend agree it's inactive, ensure tenantId is null
-        if (tenantId !== null) {
-            setTenantId(null);
-            localStorage.removeItem('tenantId');
-        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Rate limit exceeded')) {
+        // Silently ignore rate limit errors
+        return;
+      }
+      console.error('Error checking status:', error);
+      // Don't update state on error, let the next check try again
     }
-    
-    if (status.error && typeof status.error === 'string') {
-         // Handle status check error (e.g., API down), but only if it's a new error
-         if (connectionError !== `Failed to verify connection status: ${status.error}`){
-            setConnectionError(`Failed to verify connection status: ${status.error}`);
-            setIsSessionActive(false);
-            setTenantId(null);
-            localStorage.removeItem('tenantId');
-         }
-    } else if (!status.error && connectionError?.startsWith('Failed to verify connection status')){
-        // Clear status check error if connection recovers
-        clearError();
-    }
+  }, [isConnecting, isSessionActive, tenantId]);
 
-  }, [isConnecting, isSessionActive, tenantId, connectionError]); // Added connectionError dependency
-
+  // Use useEffect for periodic status checks with debouncing
   useEffect(() => {
-    checkStatus(); // Initial check
-    const intervalId = setInterval(checkStatus, 30000); // Check every 30 seconds
+    // Initial check
+    checkStatus();
 
-    return () => clearInterval(intervalId); // Cleanup on unmount
+    // Set up periodic checks with debouncing
+    const intervalId = setInterval(() => {
+      checkStatus();
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(intervalId);
   }, [checkStatus]);
 
   // Function to connect to a tenant
