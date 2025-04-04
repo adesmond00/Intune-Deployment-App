@@ -293,7 +293,6 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     {/* Fixed CodeMirror implementation to ensure only one instance is rendered */}
                     <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden" style={{ minHeight: "150px" }}>
                       <CodeMirror
-                        key={`codemirror-${uuidv4()}`} // Unique key for each instance
                         value={detectionScript}
                         options={{
                           mode: 'powershell',
