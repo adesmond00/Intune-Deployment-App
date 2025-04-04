@@ -44,24 +44,21 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
       const status = await authService.getStatus();
       console.log("Status result:", status);
 
-      // Compare fetched status with current state
-      const sessionBecameInactive = !status.active && isSessionActive;
-      const sessionBecameActive = status.active && !isSessionActive;
-      const tenantIdChanged = status.active && status.tenant_id !== tenantId;
-      const statusNeedsUpdate = sessionBecameInactive || sessionBecameActive || tenantIdChanged;
-
-      if (statusNeedsUpdate) {
-        setIsSessionActive(status.active);
-        if (status.active) {
-          const newTenantId = status.tenant_id || null;
-          setTenantId(newTenantId);
-          if (newTenantId) {
-            localStorage.setItem('tenantId', newTenantId);
-          }
-        } else {
-          setTenantId(null);
-          localStorage.removeItem('tenantId');
+      // Update state based on status response
+      if (status.active) {
+        setIsSessionActive(true);
+        const newTenantId = status.tenant_id || null;
+        setTenantId(newTenantId);
+        if (newTenantId) {
+          localStorage.setItem('tenantId', newTenantId);
         }
+        setConnectionMessage("Successfully connected to Intune");
+        clearError();
+      } else {
+        setIsSessionActive(false);
+        setTenantId(null);
+        localStorage.removeItem('tenantId');
+        setConnectionMessage(null);
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes('Rate limit exceeded')) {
@@ -69,9 +66,9 @@ export const TenantProvider: React.FC<TenantProviderProps> = ({ children }) => {
         return;
       }
       console.error('Error checking status:', error);
-      // Don't update state on error, let the next check try again
+      setConnectionError(`Failed to check status: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [isConnecting, isSessionActive, tenantId]);
+  }, [isConnecting]);
 
   // Use useEffect for periodic status checks with debouncing
   useEffect(() => {
