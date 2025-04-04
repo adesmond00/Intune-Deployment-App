@@ -23,11 +23,7 @@ interface Win32LobAppRule {
   [key: string]: any; // Allow other properties
 }
 
-interface PowerShellDetectionRule extends Win32LobAppRule {
-  '@odata.type': '#microsoft.graph.win32LobAppPowerShellScriptDetection';
-  scriptContent: string; // Base64 encoded
-  runAs32Bit: boolean;
-}
+// Removed unused PowerShellDetectionRule interface
 
 interface RequirementRule extends Win32LobAppRule {
   '@odata.type': '#microsoft.graph.win32LobAppRequirement';
@@ -111,7 +107,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
   }, [isOpen, appsToConfigure]);
 
   // Handler for CodeMirror changes
-  const handleScriptChange = useCallback((editor: any, data: any, value: string) => {
+  const handleScriptChange = useCallback((_: any, __: any, value: string) => { // Use underscores for unused params
     setDetectionScript(value);
     // TODO: Propagate this change back if needed, but likely only on final submit
   }, []);
@@ -344,9 +340,9 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                           readOnly: isCurrentAppLocked,
                         }}
                         onBeforeChange={handleScriptChange}
-                        editorDidMount={(editor) => {
+                        editorDidMount={(_) => { // Use underscore for unused editor param
                             // You can access the editor instance here if needed
-                            // editor.setSize(null, 150); // Example: Set height
+                            // _.setSize(null, 150); // Example: Set height
                         }}
                       />
                     </div>
