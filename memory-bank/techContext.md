@@ -23,8 +23,9 @@
 ## Scripting (`scripts/`)
 *   **Language**: PowerShell
 *   **Key Modules Used**:
-    *   `IntuneWin32App`: For packaging (`.intunewin`) and adding Win32 apps to Intune. (Used in `Connect-to-Intune.ps1`, `Package-MSI.ps1`, `Add-App-to-Intune.ps1`)
-    *   `Microsoft.Graph.Intune`: For connecting to and interacting with the Intune service via Microsoft Graph API. (Used in `Connect-to-Intune.ps1`)
+    *   `IntuneWin32App`: Primarily for packaging (`.intunewin`) applications (e.g., in `Package-MSI.ps1`). Note: `Add-App-to-Intune.ps1` no longer uses this module for deployment.
+    *   `Microsoft.Graph.Authentication`: Used by `Add-App-to-Intune.ps1` for potentially connecting to Graph if `Invoke-MgGraphRequest` were used (though the current implementation uses `Invoke-RestMethod` with a bearer token). Also used by `Connect-to-Intune.ps1`.
+    *   (Implicit) `Microsoft.PowerShell.Utility`: Used for `Invoke-RestMethod` in `Add-App-to-Intune.ps1` for direct Graph API calls.
 *   **External Tools**:
     *   `winget.exe`: Windows Package Manager command-line tool. Used for searching (`api/winget.py`) and installing/uninstalling (`scripts/Winget-InstallPackage.ps1`). The `Winget-InstallPackage.ps1` script includes logic to download and set up `winget` if it's not found.
     *   `7zip` (specifically `7zr.exe`, `7za.exe`): Used within `Winget-InstallPackage.ps1` to extract the `winget` MSIX bundle if needed.

@@ -20,9 +20,10 @@
         *   Passes the access token securely to the script via the `-AccessToken` parameter.
 *   **Winget Search Logic**: `api/winget.py` correctly parses `winget search` output.
 *   **PowerShell Scripts**:
-    *   `Add-App-to-Intune.ps1`: Updated to accept `-AccessToken` parameter and use `Connect-MgGraph -AccessToken` for authentication. Outputs JSON result.
-    *   `Connect-to-Intune.ps1`: Refactored to only check/install required modules (`Microsoft.Graph.Authentication`, `IntuneWin32App`). (Note: This script is likely less relevant now as connection is handled by token passing). Outputs JSON status.
-    *   `Winget-InstallPackage.ps1`: Robust script for winget install/uninstall (currently runs standalone, doesn't require Intune auth).
+    *   `Add-App-to-Intune.ps1`: **Refactored** to use direct Microsoft Graph API calls (`Invoke-RestMethod`) with the provided `-AccessToken` for Win32 app deployment, bypassing the `IntuneWin32App` module. Accepts parameters including rules formatted as JSON strings. Outputs JSON result.
+    *   `Connect-to-Intune.ps1`: Checks/installs modules. Less relevant now as connection is handled by token passing to other scripts.
+    *   `Winget-InstallPackage.ps1`: Robust script for winget install/uninstall (standalone).
+*   **Backend Parameter Handling**: `/execute-script` endpoint in `api/api.py` updated to correctly format parameters for `Add-App-to-Intune.ps1`, including converting detection/requirement rules to JSON strings.
 *   **Configuration Placeholders**: Placeholders added for Azure AD details and session secret key in `api/api.py` and `Front-end/src/config.ts`.
 *   **Virtual Environment**: Backend dependencies installed in `api/.venv`.
 *   **Build/Run Fixes**: Corrected relative imports, simplified `__init__.py`, updated to FastAPI `lifespan` events, identified correct `uvicorn` command structure (run from project root, without `--reload` initially to diagnose).
@@ -30,7 +31,9 @@
 ## What's Missing / Incomplete / Needs Work
 
 *   **Configuration Values**: **User MUST replace placeholder values** for `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, and `ITSANGEROUS_SECRET_KEY` in `api/api.py` and `Front-end/src/config.ts`.
-*   **Testing**: The complete OAuth flow (login, logout, token refresh) and the token-based script execution (`/execute-script` calling `Add-App-to-Intune.ps1` with `-AccessToken`) require thorough testing *after* fixing the frontend UI update issue.
+*   **Testing**:
+    *   The refactored deployment flow (`/execute-script` calling the updated `Add-App-to-Intune.ps1`) needs thorough testing via the UI/API to confirm the original 401 error is resolved.
+    *   The complete OAuth flow (login, logout, token refresh) requires testing *after* fixing the frontend UI update issue.
 *   **Frontend Functionality**:
     *   Deployment confirmation/triggering from `DeploymentConfigModal` is not implemented.
     *   "Add an App with Scoop" and custom MSI/EXE features are not implemented.
@@ -48,6 +51,7 @@
 ## Known Issues
 *   **Frontend UI Not Updating After Login:** After successful OAuth login and redirect, the frontend UI (`TenantContext`) does not automatically reflect the logged-in state. The `checkStatus` call on load might be executing before the session cookie is fully available/set by the browser after the redirect, or there could be other timing/state propagation issues within React. Requires investigation.
 *   **(Resolved)** "Connect to Tenant" feature hung due to attempting interactive PowerShell login from the backend. Replaced with backend-managed OAuth 2.0 flow using session cookies and token passing.
-*   **(Resolved)** Backend failed to load (`ModuleNotFoundError`, `ImportError`) due to incorrect Uvicorn command execution directory/flags and missing/incorrect imports. Corrected imports and run command.
-*   **(Resolved)** Azure AD required PKCE (`AADSTS9002325`). Implemented PKCE in backend auth flow.
+*   **(Resolved)** Backend failed to load (`ModuleNotFoundError`, `ImportError`).
+*   **(Resolved)** Azure AD required PKCE (`AADSTS9002325`).
+*   **(Resolved)** Deployment failed with 401 error when using `Add-IntuneWin32App` cmdlet with token authentication. Refactored script to use direct Graph API calls.
 *   **(Previous/Resolved)** Various issues related to Winget search API method, response parsing, CORS, etc.

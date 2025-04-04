@@ -31,9 +31,9 @@ graph LR
 
 3.  **External Tool Integration**: The system integrates with external command-line tools:
     *   `winget.exe`: Leveraged for application searching (via `api/winget.py`) and installation/uninstallation (via `scripts/Winget-InstallPackage.ps1`). The installation script includes robust handling for cases where `winget` might not be present or requires specific dependencies (like Visual C++ Redistributable).
-    *   `IntuneWin32App` module cmdlets: Used for packaging and deploying Win32 apps.
+    *   Microsoft Graph API: The `Add-App-to-Intune.ps1` script now uses direct `Invoke-RestMethod` calls to the Graph API for deploying Win32 apps, bypassing the `IntuneWin32App` module for this task. Packaging might still use related tools/modules.
 
-4.  **Configuration via Parameters**: PowerShell scripts are designed to be parameterized (`Add-App-to-Intune.ps1`, `Winget-InstallPackage.ps1`). The API layer passes necessary configuration details (like display names, install commands, package IDs) and crucially, the **`-AccessToken`** parameter for authenticating script interactions with Microsoft Graph.
+4.  **Configuration via Parameters**: PowerShell scripts are designed to be parameterized (`Add-App-to-Intune.ps1`, `Winget-InstallPackage.ps1`). The API layer passes necessary configuration details (like display names, install commands, package IDs) and crucially, the **`-AccessToken`** parameter. The `Add-App-to-Intune.ps1` script uses this token directly to authenticate its Microsoft Graph API calls.
 
 5.  **State Management**:
     *   **Authentication State**: Managed by the backend using secure, signed, HTTP-only session cookies (`itsdangerous`). These cookies store refresh tokens, access tokens, expiry times, and tenant ID, enabling persistent sessions and automatic token refresh.

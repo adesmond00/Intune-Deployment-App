@@ -1,93 +1,95 @@
-#Requires -Modules Microsoft.Graph.Authentication, IntuneWin32App
+#Requires -Modules Microsoft.Graph.Authentication
 
 # Import necessary modules explicitly
 Import-Module Microsoft.Graph.Authentication -ErrorAction SilentlyContinue
-Import-Module IntuneWin32App -ErrorAction SilentlyContinue
 
 <#
 .SYNOPSIS
-    Creates a new Win32 application in Microsoft Intune.
+    Creates a new Win32 application in Microsoft Intune using direct Graph API calls.
 
 .DESCRIPTION
-    The Add-AppToIntune cmdlet creates a new Win32 application in Microsoft Intune. This cmdlet is used to deploy
-    traditional Windows applications (.exe, .msi) through Intune's Win32 app deployment feature.
+    The Add-AppToIntune function creates a new Win32 application (#microsoft.graph.win32LobApp)
+    in Microsoft Intune by interacting directly with the Microsoft Graph API.
+    This approach avoids dependencies on the IntuneWin32App module.
+
+.PARAMETER AccessToken
+    A valid Microsoft Graph Access Token for authentication. This token must have the necessary permissions
+    (e.g., DeviceManagementApps.ReadWrite.All) to create applications in Intune.
 
 .PARAMETER IntuneWinFile
-    The path to the .intunewin file that contains the packaged Win32 application. This file must be created using
-    the New-IntuneWin32AppPackage cmdlet before using this command.
+    The path to the .intunewin file that contains the packaged Win32 application.
 
 .PARAMETER DisplayName
-    The display name of the application as it will appear in the Microsoft Endpoint Manager admin center and
-    to end users. This should be descriptive and unique.
+    The display name of the application.
 
 .PARAMETER Description
-    A detailed description of the application and its purpose. This helps administrators and users understand
-    what the application does.
+    A detailed description of the application.
 
 .PARAMETER Publisher
-    The name of the application publisher or vendor. This helps in organizing and identifying applications
-    from different vendors.
+    The name of the application publisher.
 
 .PARAMETER InstallExperience
-    Specifies how the application should be installed. Valid values are:
-    - "system": Installs the application in the system context (recommended for most scenarios)
-    - "user": Installs the application in the user context
+    Specifies how the application should be installed ("system" or "user").
 
 .PARAMETER RestartBehavior
-    Defines the restart behavior after installation. Valid values are:
-    - "suppress": Prevents automatic restart after installation
-    - "force": Forces a restart after installation
-    - "basedOnReturnCode": Restarts based on the return code of the installation
+    Defines the restart behavior ("suppress", "force", "basedOnReturnCode").
 
-.PARAMETER DetectionRule
-    Specifies the rules used to detect if the application is already installed on a device. This is created using
-    one of the New-IntuneWin32AppDetectionRule* cmdlets (e.g., New-IntuneWin32AppDetectionRuleMSI for MSI-based
-    applications).
+.PARAMETER DetectionRules
+    An array of PowerShell custom objects representing the detection rules in Graph API format.
+    Example: @{ '@odata.type' = '#microsoft.graph.win32LobAppMsiInformation'; 'productCode' = '{GUID}' }
+    Example: @{ '@odata.type' = '#microsoft.graph.win32LobAppRegistryDetection'; 'check32BitOn64System' = $false; 'detectionType' = 'exists'; 'keyPath' = 'HKLM\Software\MyApp'; 'valueName' = 'Version' }
 
-.PARAMETER RequirementRule
-    Defines the prerequisites that must be met on a device before the application can be installed. This is created
-    using the New-IntuneWin32AppRequirementRule cmdlet and can specify requirements like minimum OS version and
-    system architecture.
+.PARAMETER RequirementRules
+    An array of PowerShell custom objects representing the requirement rules in Graph API format.
+    Example: @{ '@odata.type' = '#microsoft.graph.win32LobAppRequirement'; 'operator' = 'greaterOrEqual'; 'detectionType' = 'version'; 'value' = '10.0.19041' } # Example for OS Version
 
 .PARAMETER InstallCommandLine
-    The command line used to install the application. This should be the full command including any arguments
-    or switches needed for silent installation.
+    The command line used to install the application silently.
 
 .PARAMETER UninstallCommandLine
-    The command line used to uninstall the application. This should be the full command including any arguments
-    or switches needed for silent uninstallation.
+    The command line used to uninstall the application silently.
+
+.PARAMETER MinimumSupportedOperatingSystem
+    (Optional) A hashtable representing the minimum OS required. Example: @{v10_0 = $true} for Windows 10.
+
+.PARAMETER SetupFilePath
+    (Optional) Relative path of the setup file within the .intunewin package (e.g., "setup.exe"). Often not needed if InstallCommandLine includes the filename.
 
 .EXAMPLE
-    $detectionRule = New-IntuneWin32AppDetectionRuleMSI -ProductCode "{23170F69-40C1-2702-1900-000001000000}"
-    $requirementRule = New-IntuneWin32AppRequirementRule -Architecture "x64" -MinimumSupportedWindowsRelease "1909"
-    
-    Add-AppToIntune -IntuneWinFile "C:\Packages\7zip.intunewin" `
-                    -DisplayName "7-Zip" `
-                    -Description "7-Zip file archiver" `
+    # Note: Detection/Requirement rules need to be constructed as PS Custom Objects matching Graph schema
+    $detectionRule = [PSCustomObject]@{
+        '@odata.type' = '#microsoft.graph.win32LobAppMsiInformation'
+        productCode = '{23170F69-40C1-2702-1900-000001000000}'
+        # productVersion = '...' # Optional
+        # upgradeCode = '...' # Optional
+    }
+    $requirementRule = [PSCustomObject]@{
+         '@odata.type' = '#microsoft.graph.win32LobAppRequirement'
+         operator = 'greaterOrEqual'
+         detectionType = 'version'
+         value = '10.0.19041' # Example for Windows 10 2004+
+    }
+
+    Add-AppToIntune -AccessToken "YOUR_ACCESS_TOKEN" `
+                    -IntuneWinFile "C:\Packages\7zip.intunewin" `
+                    -DisplayName "7-Zip (Graph API)" `
+                    -Description "7-Zip file archiver via Graph" `
                     -Publisher "Igor Pavlov" `
                     -InstallExperience "system" `
                     -RestartBehavior "suppress" `
-                    -DetectionRule $detectionRule `
-                    -RequirementRule $requirementRule `
+                    -DetectionRules @($detectionRule) `
+                    -RequirementRules @($requirementRule) `
                     -InstallCommandLine "msiexec /i 7zip.msi /qn" `
                     -UninstallCommandLine "msiexec /x {23170F69-40C1-2702-1900-000001000000} /qn"
 
 .NOTES
-    - This cmdlet requires appropriate permissions in Microsoft Intune
-    - The .intunewin file must be created before using this command
-    - Detection and requirement rules must be properly configured for successful deployment
-    - The application will not be assigned to any users or devices by default; assignments must be created separately
-    - Requires a valid Microsoft Graph Access Token with appropriate permissions (e.g., DeviceManagementApps.ReadWrite.All).
-
-.PARAMETER AccessToken
-    A valid Microsoft Graph Access Token for authentication. This token must have the necessary permissions
-    to create applications in Intune.
+    - Requires a valid Microsoft Graph Access Token with DeviceManagementApps.ReadWrite.All permission.
+    - File upload currently attempts a single PUT request, suitable for smaller files. Chunked upload is recommended for large files (>60MB).
+    - Detection and Requirement rules must be provided in the specific JSON structure expected by the Graph API, represented here as PowerShell custom objects.
+    - Error handling is basic; more robust checks on API responses might be needed.
 #>
-
-
-#Adds the app to Intune as a win32 App
 function Add-AppToIntune {
-    [CmdletBinding(SupportsShouldProcess = $true)] # Added SupportsShouldProcess
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory = $true)]
         [string]$AccessToken,
@@ -95,7 +97,7 @@ function Add-AppToIntune {
         [Parameter(Mandatory = $true)]
         [string]$IntuneWinFile,
 
-        [Parameter(Mandatory = $true)] 
+        [Parameter(Mandatory = $true)]
         [string]$DisplayName,
 
         [Parameter(Mandatory = $true)]
@@ -113,90 +115,197 @@ function Add-AppToIntune {
         [string]$RestartBehavior = "suppress",
 
         [Parameter(Mandatory = $true)]
-        $DetectionRule,
+        [array]$DetectionRules, # Expecting array of PSCustomObjects matching Graph schema
 
         [Parameter(Mandatory = $true)]
-        $RequirementRule,
+        [array]$RequirementRules, # Expecting array of PSCustomObjects matching Graph schema
 
         [Parameter(Mandatory = $true)]
         [string]$InstallCommandLine,
 
         [Parameter(Mandatory = $true)]
-        [string]$UninstallCommandLine
+        [string]$UninstallCommandLine,
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$MinimumSupportedOperatingSystem = @{ V10_0 = $true }, # Default to Win 10
+
+        [Parameter(Mandatory = $false)]
+        [string]$SetupFilePath = $null # Relative path within package if needed
     )
 
-    $ErrorActionPreference = 'Stop' # Stop on terminating errors
+    $ErrorActionPreference = 'Stop'
+    $VerbosePreference = 'Continue' # Enable verbose output
     $result = @{ success = $false; output = $null; error = $null }
+    $graphApiBaseUrl = "https://graph.microsoft.com/v1.0"
+    $mobileAppsUrl = "$graphApiBaseUrl/deviceAppManagement/mobileApps"
 
     try {
-        Write-Verbose "Attempting to connect to Microsoft Graph with provided access token."
-        # Convert the token string to a SecureString
-        $secureToken = ConvertTo-SecureString -String $AccessToken -AsPlainText -Force
-        Connect-MgGraph -AccessToken $secureToken
-        Write-Verbose "Successfully connected to Microsoft Graph."
+        Write-Verbose "Script started. Validating parameters..."
 
-        # Check if modules are available after attempting import
-        if (-not (Get-Module -Name Microsoft.Graph.Authentication) -or -not (Get-Module -Name IntuneWin32App)) {
-             throw "Required PowerShell modules (Microsoft.Graph.Authentication, IntuneWin32App) are not available."
+        # --- Parameter Validation ---
+        if (-not (Test-Path -Path $IntuneWinFile -PathType Leaf)) {
+            throw "IntuneWin file not found at path: $IntuneWinFile"
+        }
+        if (-not $AccessToken) { throw "AccessToken is required." }
+        # Add more validation as needed
+
+        # --- Prepare Headers ---
+        $headers = @{
+            "Authorization" = "Bearer $AccessToken"
+            "Content-Type"  = "application/json"
+            "Accept"        = "application/json"
         }
 
-        # Prepare parameters for Add-IntuneWin32App
-        $addParams = @{
-            FilePath            = $IntuneWinFile
-            DisplayName         = $DisplayName
-            Description         = $Description
-            Publisher           = $Publisher
-            InstallExperience   = $InstallExperience
-            RestartBehavior     = $RestartBehavior
-            DetectionRule       = $DetectionRule
-            RequirementRule     = $RequirementRule
-            InstallCommandLine  = $InstallCommandLine
-            UninstallCommandLine = $UninstallCommandLine
-            Verbose             = $true # Keep verbose logging from the cmdlet
+        # --- 1. Create the initial Win32LobApp object ---
+        Write-Verbose "Step 1: Creating initial Win32LobApp object..."
+        $appPayload = @{
+            "@odata.type"                     = "#microsoft.graph.win32LobApp"
+            displayName                       = $DisplayName
+            description                       = $Description
+            publisher                         = $Publisher
+            installCommandLine                = $InstallCommandLine
+            uninstallCommandLine              = $UninstallCommandLine
+            installExperience                 = $InstallExperience # Note: Graph uses 'runAsAccount'
+            minimumSupportedOperatingSystem   = $MinimumSupportedOperatingSystem
+            setupFilePath                     = $SetupFilePath # Relative path in package if needed
+            # Other properties like 'notes', 'owner', 'developer', 'informationUrl', 'privacyUrl' can be added here
+            # 'committedContentVersion' will be set after upload
+        } | ConvertTo-Json -Depth 5
+
+        Write-Verbose "App Payload: $appPayload"
+
+        $createAppResponse = Invoke-RestMethod -Uri $mobileAppsUrl -Method Post -Headers $headers -Body $appPayload -ErrorAction Stop
+        $appId = $createAppResponse.id
+        Write-Verbose "Successfully created app object with ID: $appId"
+
+        # --- 2. Create Content Version ---
+        Write-Verbose "Step 2: Creating content version..."
+        $contentVersionUrl = "$mobileAppsUrl/$appId/contentVersions"
+        $contentVersionPayload = @{
+            "@odata.type" = "#microsoft.graph.mobileAppContent"
+        } | ConvertTo-Json
+
+        $createContentVersionResponse = Invoke-RestMethod -Uri $contentVersionUrl -Method Post -Headers $headers -Body $contentVersionPayload -ErrorAction Stop
+        $contentVersionId = $createContentVersionResponse.id
+        Write-Verbose "Successfully created content version with ID: $contentVersionId"
+
+        # --- 3. Create File Entry ---
+        Write-Verbose "Step 3: Creating file entry..."
+        $fileInfo = Get-Item -Path $IntuneWinFile
+        $fileSize = $fileInfo.Length
+        $fileName = $fileInfo.Name
+
+        $fileEntryUrl = "$mobileAppsUrl/$appId/contentVersions/$contentVersionId/files"
+        $fileEntryPayload = @{
+            "@odata.type" = "#microsoft.graph.mobileAppContentFile"
+            name          = $fileName
+            size          = $fileSize
+            # isDependency = $false # Default
+            # manifest = $null # Optional base64 encoded manifest
+        } | ConvertTo-Json
+
+        $createFileEntryResponse = Invoke-RestMethod -Uri $fileEntryUrl -Method Post -Headers $headers -Body $fileEntryPayload -ErrorAction Stop
+        $fileId = $createFileEntryResponse.id
+        Write-Verbose "Successfully created file entry with ID: $fileId"
+
+        # --- 4. Get SAS URI and Commit File ---
+        Write-Verbose "Step 4: Committing file entry to get SAS URI..."
+        $commitUrl = "$mobileAppsUrl/$appId/contentVersions/$contentVersionId/files/$fileId/commit"
+        $commitPayload = @{
+            "@odata.type"    = "#microsoft.graph.mobileAppContentFile"
+            # fileEncryptionInfo = $null # If needed
+        } | ConvertTo-Json
+
+        $commitResponse = Invoke-RestMethod -Uri $commitUrl -Method Post -Headers $headers -Body $commitPayload -ErrorAction Stop
+        $sasUri = $commitResponse.azureStorageUri
+        $sasUriExpiration = $commitResponse.azureStorageUriExpirationDateTime
+        Write-Verbose "Obtained SAS URI (expires: $sasUriExpiration)"
+
+        # --- 5. Upload File Content ---
+        Write-Verbose "Step 5: Uploading file content to SAS URI..."
+        # Read file content as byte array
+        $fileBytes = [System.IO.File]::ReadAllBytes($IntuneWinFile)
+
+        # Prepare headers for Azure Blob Storage PUT request
+        $uploadHeaders = @{
+            "x-ms-blob-type" = "BlockBlob"
+            # "Content-Length" = $fileSize # Invoke-RestMethod might handle this
         }
 
-        Write-Verbose "Calling Add-IntuneWin32App with parameters:"
-        Write-Verbose ($addParams | Out-String)
+        # Perform the upload (single PUT for now, consider chunking for large files)
+        # Note: Invoke-RestMethod might have size limits. AzCopy or Azure.Storage.Blobs module are more robust for large files.
+        Invoke-RestMethod -Uri $sasUri -Method Put -Headers $uploadHeaders -Body $fileBytes -ContentType "application/octet-stream" -ErrorAction Stop
+        Write-Verbose "Successfully uploaded file content."
 
-        if ($PSCmdlet.ShouldProcess($DisplayName, "Add Win32 App to Intune")) {
-            # Execute the command
-            $intuneApp = Add-IntuneWin32App @addParams
-            
-            if ($intuneApp) {
-                Write-Verbose "Successfully added application '$DisplayName' to Intune."
-                $result.success = $true
-                # Select relevant properties to return, convert to JSON friendly format
-                $result.output = $intuneApp | Select-Object -Property Id, DisplayName, Publisher, CreatedDateTime, LastModifiedDateTime, Version | ConvertTo-Json -Depth 3 
-            } else {
-                throw "Add-IntuneWin32App command did not return an application object."
+        # --- 6. Update App with Final Details (Install Behavior, Detection, Requirements) ---
+        Write-Verbose "Step 6: Updating app object with final details..."
+        $patchUrl = "$mobileAppsUrl/$appId"
+        $patchPayload = @{
+            "@odata.type"           = "#microsoft.graph.win32LobApp" # Important to specify type again for PATCH
+            committedContentVersion = $contentVersionId # Link the uploaded content
+            installExperience       = @{ # Map to nested object
+                runAsAccount = $InstallExperience
             }
-        } else {
-             Write-Warning "Operation cancelled by ShouldProcess."
-             $result.error = "Operation cancelled by ShouldProcess."
-        }
+            returnCodes             = @( # Default return codes, can be customized
+                @{ returnCode = 0; type = 'success' }
+                @{ returnCode = 1707; type = 'success' }
+                @{ returnCode = 3010; type = 'softReboot' }
+                @{ returnCode = 1641; type = 'hardReboot' }
+                @{ returnCode = 1618; type = 'retry' }
+            )
+            rules                   = @( # Combine detection and requirement rules
+                $DetectionRules # Assumes this is already an array of correct PSCustomObjects
+                $RequirementRules # Assumes this is already an array of correct PSCustomObjects
+            )
+        } | ConvertTo-Json -Depth 5 # Ensure sufficient depth for nested rules
+
+        Write-Verbose "Patch Payload: $patchPayload"
+
+        # Use PATCH method for updates
+        $patchHeaders = $headers.Clone() # Clone original headers
+        $patchHeaders["Content-Type"] = "application/json" # Ensure content type is JSON
+
+        $updateResponse = Invoke-RestMethod -Uri $patchUrl -Method Patch -Headers $patchHeaders -Body $patchPayload -ErrorAction Stop
+        Write-Verbose "Successfully patched application object."
+
+        # --- Success ---
+        $result.success = $true
+        $result.output = $updateResponse | Select-Object -Property Id, DisplayName, Publisher, CreatedDateTime, LastModifiedDateTime, Version | ConvertTo-Json -Depth 3
+        Write-Verbose "Application '$DisplayName' added/updated successfully via Graph API."
 
     } catch {
-        Write-Error "Error adding application '$DisplayName' to Intune: $($_.Exception.Message)"
+        Write-Error "Error adding application '$DisplayName' via Graph API: $($_.Exception.Message)"
+        # Try to get more details from the response if it's a WebException
+        if ($_.Exception -is [System.Net.WebException]) {
+            $response = $_.Exception.Response
+            if ($response) {
+                $streamReader = [System.IO.StreamReader]::new($response.GetResponseStream())
+                $errorBody = $streamReader.ReadToEnd()
+                $streamReader.Dispose()
+                Write-Error "API Error Response: $errorBody"
+                $result.error = "API Error: $errorBody"
+            } else {
+                 $result.error = "Error: $($_.Exception.Message)"
+            }
+        } else {
+            $result.error = "Error: $($_.Exception.Message)"
+        }
         Write-Error $_.ScriptStackTrace
-        $result.error = "Error adding application '$DisplayName': $($_.Exception.Message)"
         # Output error details to stderr as JSON
         Write-Error ($result | ConvertTo-Json -Depth 3)
-        # Exit with non-zero code to indicate failure to the caller
-        exit 1 
+        exit 1 # Indicate failure
     } finally {
-         # Disconnect if needed, though token-based connection is usually stateless per command
-         # Disconnect-MgGraph -ErrorAction SilentlyContinue 
-         
-         # Output final result to stdout as JSON if successful
-         if ($result.success) {
-             Write-Output ($result | ConvertTo-Json -Depth 3)
-         }
+        # Disconnect is generally not needed for token-based auth with Invoke-RestMethod
+        # Output final result to stdout as JSON if successful
+        if ($result.success) {
+            Write-Output ($result | ConvertTo-Json -Depth 3)
+        }
     }
 }
 
-# Example of how to call this if run directly (requires manual token input)
+# Example of how to call this if run directly (requires manual token input & rule objects)
 # if ($MyInvocation.MyCommand.CommandOrigin -eq 'Runspace') {
 #     $token = Read-Host -Prompt "Enter Access Token"
-#     # Add other parameter values here...
-#     Add-AppToIntune -AccessToken $token # ... other params
+#     # Define $detectionRule, $requirementRule, etc. as PSCustomObjects here...
+#     # Add-AppToIntune -AccessToken $token ... other params
 # }

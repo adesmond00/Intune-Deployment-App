@@ -559,17 +559,43 @@ async def execute_script(script_request: ScriptExecutionRequest, session: dict =
         if not os.path.isfile(script_path):
              raise FileNotFoundError(f"Script file not found at calculated path: {script_path}")
 
-        # Construct parameters - MUST include passing the token securely
-        params_list = []
-        if script_request.parameters:
-            for k, v in script_request.parameters.items():
-                 # Basic quoting for safety, might need refinement based on script needs
-                 safe_v = str(v).replace("'", "''")
-                 params_list.extend([f"-{k}", f"'{safe_v}'"])
-                 # params_list.extend([f"-{k}", str(v)]) # Original basic conversion
+         # Construct parameters - MUST include passing the token securely
+         params_list = []
+         script_params = script_request.parameters or {}
 
-        # Add the access token parameter
-        # Pass token securely - avoid command line if possible, consider stdin or temp file
+         # Special handling for rules if calling Add-App-to-Intune.ps1
+         if script_request.command == "Add-App-to-Intune.ps1":
+             detection_rules = script_params.pop('DetectionRules', [])
+             requirement_rules = script_params.pop('RequirementRules', [])
+
+             # Convert rules to JSON strings for PowerShell to parse
+             # PowerShell's ConvertFrom-Json can handle JSON arrays passed as strings
+             if detection_rules:
+                 # Wrap the JSON string in single quotes for PowerShell
+                 params_list.extend(["-DetectionRules", f"'{json.dumps(detection_rules)}'"])
+             if requirement_rules:
+                 params_list.extend(["-RequirementRules", f"'{json.dumps(requirement_rules)}'"])
+
+         # Handle remaining parameters
+         if script_params:
+             for k, v in script_params.items():
+                 # Basic quoting for safety, might need refinement based on script needs
+                 # Handle boolean values specifically for PowerShell $true/$false
+                 if isinstance(v, bool):
+                     ps_bool = "$true" if v else "$false"
+                     params_list.extend([f"-{k}", ps_bool])
+                 elif isinstance(v, (int, float)):
+                      params_list.extend([f"-{k}", str(v)]) # Numbers don't need quotes
+                 elif v is None:
+                      params_list.extend([f"-{k}", "$null"]) # Pass PowerShell $null
+                 else:
+                     # Quote other string values
+                     safe_v = str(v).replace("'", "''") # Escape single quotes for PS
+                     params_list.extend([f"-{k}", f"'{safe_v}'"])
+
+
+         # Add the access token parameter
+         # Pass token securely - avoid command line if possible, consider stdin or temp file
         # For now, passing via command line argument as placeholder
         params_list.extend(["-AccessToken", access_token]) # Assuming script accepts -AccessToken
 
