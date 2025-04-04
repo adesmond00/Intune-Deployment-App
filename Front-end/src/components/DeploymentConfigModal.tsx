@@ -7,9 +7,8 @@
  * including a PowerShell detection script editor.
  */
 import React, { useState, useEffect, useCallback } from 'react';
-// Import the interface from the page component
-// TODO: Consider moving shared interfaces to a dedicated types file (e.g., src/types.ts)
-import { StagedAppDeploymentInfo } from '../pages/WingetAppPage';
+// Import types from the new types file
+import { StagedAppDeploymentInfo, RequirementRule, Win32LobAppRule, defaultRequirementRules } from '../types';
 
 // Import CodeMirror 5 components and styles
 import { Controlled as CodeMirror } from 'react-codemirror2';
@@ -17,20 +16,7 @@ import 'codemirror/lib/codemirror.css';
 import 'codemirror/theme/material.css'; // Or choose another theme
 import 'codemirror/mode/powershell/powershell'; // Import PowerShell mode
 
-// Define types for rules (matching Graph API structure)
-interface Win32LobAppRule {
-  '@odata.type': string;
-  [key: string]: any; // Allow other properties
-}
-
-// Removed unused PowerShellDetectionRule interface
-
-interface RequirementRule extends Win32LobAppRule {
-  '@odata.type': '#microsoft.graph.win32LobAppRequirement';
-  operator: 'greaterOrEqual' | 'equal' | 'lessOrEqual' | 'less' | 'greater' | 'notEqual'; // Example operators
-  detectionType: 'version' | 'architecture' | 'diskSpace' | 'ram'; // Example types
-  value: string;
-}
+// Type definitions moved to src/types.ts
 
 
 /**
@@ -52,48 +38,20 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
   onToggleLock, // Destructure the new prop
 }) => {
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState<boolean>(false);
-  const [detectionScript, setDetectionScript] = useState<string>('');
-  const [runAs32Bit, setRunAs32Bit] = useState<boolean>(true); // Default to 32-bit as requested
-  const [requirementRules, setRequirementRules] = useState<RequirementRule[]>([]);
+  // Removed local state for showAdvancedSettings, detectionScript, runAs32Bit, requirementRules
+  // These will now be derived from the currentApp prop
 
-  // Get the lock status of the currently selected app
-  const isCurrentAppLocked = appsToConfigure[selectedIndex]?.isLocked ?? false;
+  // Get the currently selected app and its lock status
+  const currentApp = appsToConfigure.length > 0 && selectedIndex < appsToConfigure.length
+    ? appsToConfigure[selectedIndex]
+    : null;
+  const isCurrentAppLocked = currentApp?.isLocked ?? false;
 
-  // Default Requirement Rules
-  const defaultRequirementRules: RequirementRule[] = [
-    {
-      '@odata.type': '#microsoft.graph.win32LobAppRequirement',
-      operator: 'greaterOrEqual',
-      detectionType: 'version',
-      value: '10.0.10240', // Windows 10 RTM
-    },
-    {
-      '@odata.type': '#microsoft.graph.win32LobAppRequirement',
-      operator: 'equal',
-      detectionType: 'architecture',
-      value: 'x64', // Default to x64 as requested
-    },
-  ];
+  // Default Requirement Rules are imported from types.ts
 
-  // Initialize/Reset local state when modal opens or selected app changes
-  useEffect(() => {
-    if (isOpen && appsToConfigure.length > 0) {
-      // Reset local state for the newly selected/displayed app
-      // Initialize with defaults, as these are being configured here
-      setDetectionScript(''); // Start with empty script
-      setRunAs32Bit(true); // Default to 32-bit
-      setRequirementRules(defaultRequirementRules); // Start with default requirements
-      setShowAdvancedSettings(false); // Reset advanced view
-    } else if (!isOpen) {
-       // Reset state completely when modal closes
-       setDetectionScript('');
-       setRunAs32Bit(true);
-       setRequirementRules([]);
-       setShowAdvancedSettings(false);
-    }
-  }, [isOpen, selectedIndex, appsToConfigure]); // Rerun when modal opens or selection changes
+  // Removed the useEffect hook that reset local state based on selectedIndex
 
+  // This effect ensures selectedIndex is valid when appsToConfigure changes or modal opens
   useEffect(() => {
     if (isOpen) {
       setSelectedIndex((prevIndex) =>
@@ -106,24 +64,22 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
     // Removed dependency on appsToConfigure.length as it's covered by appsToConfigure
   }, [isOpen, appsToConfigure]);
 
-  // Handler for CodeMirror changes
-  const handleScriptChange = useCallback((_: any, __: any, value: string) => { // Use underscores for unused params
-    setDetectionScript(value);
-    // TODO: Propagate this change back if needed, but likely only on final submit
-  }, []);
+  // Handler for CodeMirror changes - Updates parent state via onUpdateApp
+  const handleScriptChange = useCallback((_: any, __: any, value: string) => {
+    if (currentApp) {
+      onUpdateApp(selectedIndex, { ...currentApp, detectionScript: value });
+    }
+  }, [currentApp, selectedIndex, onUpdateApp]);
 
 
   if (!isOpen) {
-    return null;
+    return null; // Return null if the modal should not be open
   }
 
-  const currentApp = appsToConfigure.length > 0 ? appsToConfigure[selectedIndex] : null;
-
-  // Removed hardcoded showCommandLines flag
-
+  // Define handleInputChange here, after the early return check
   const handleInputChange = (
     field: keyof StagedAppDeploymentInfo,
-    value: string | 'system' | 'user' | 'suppress' | 'force'
+    value: string | 'system' | 'user' | 'suppress' | 'force' | boolean // Added boolean for potential future use
   ) => {
     if (!currentApp) return;
     const updatedApp = { ...currentApp, [field]: value };
@@ -272,14 +228,18 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Show Advanced</span>
                     <button
                       type="button" // Prevent form submission
-                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                      className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${showAdvancedSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      aria-checked={showAdvancedSettings}
+                      onClick={() => { // Update parent state
+                        if (currentApp) {
+                          onUpdateApp(selectedIndex, { ...currentApp, showAdvancedSettings: !(currentApp.showAdvancedSettings || false) });
+                        }
+                      }}
+                      className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${(currentApp?.showAdvancedSettings || false) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      aria-checked={currentApp?.showAdvancedSettings || false}
                       role="switch"
                       disabled={isCurrentAppLocked} // Disable if locked
                     >
                       <div
-                        className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${showAdvancedSettings ? 'translate-x-5' : ''}`}
+                        className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${(currentApp?.showAdvancedSettings || false) ? 'translate-x-5' : ''}`}
                       ></div>
                     </button>
                  </div>
@@ -292,7 +252,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     {/* Fixed CodeMirror implementation to ensure only one instance is rendered */}
                     <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden" style={{ minHeight: "150px" }}>
                       <CodeMirror
-                        value={detectionScript}
+                        value={currentApp?.detectionScript || ''} // Read from currentApp prop
                         options={{
                           mode: 'powershell',
                           theme: 'material',
@@ -301,7 +261,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                           viewportMargin: Infinity, // Helps with proper sizing
                           lineWrapping: true,
                         }}
-                        onBeforeChange={handleScriptChange}
+                        onBeforeChange={handleScriptChange} // Already updated to call onUpdateApp
                         editorDidMount={(editor) => {
                           // Force a refresh to ensure proper rendering
                           setTimeout(() => editor.refresh(), 50);
@@ -309,20 +269,24 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                       />
                     </div>
                     {/* 32/64-bit Toggle - Conditionally Visible */}
-                    {showAdvancedSettings && (
+                    {(currentApp?.showAdvancedSettings || false) && ( // Read from currentApp prop
                         <div className="flex items-center justify-start mt-2 space-x-2 group">
                             <button
                               type="button"
-                              onClick={() => setRunAs32Bit(!runAs32Bit)}
-                              className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${runAs32Bit ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              aria-checked={runAs32Bit}
+                              onClick={() => { // Update parent state
+                                if (currentApp) {
+                                  onUpdateApp(selectedIndex, { ...currentApp, runAs32Bit: !(currentApp.runAs32Bit ?? true) });
+                                }
+                              }}
+                              className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${(currentApp?.runAs32Bit ?? true) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                              aria-checked={currentApp?.runAs32Bit ?? true}
                               role="switch"
                               disabled={isCurrentAppLocked}
                             >
-                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${runAs32Bit ? 'translate-x-5' : ''}`}></div>
+                              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${(currentApp?.runAs32Bit ?? true) ? 'translate-x-5' : ''}`}></div>
                             </button>
                             <span className="text-sm text-gray-700 dark:text-gray-300">
-                                Run script as {runAs32Bit ? '32-bit' : '64-bit'} process on 64-bit systems
+                                Run script as {(currentApp?.runAs32Bit ?? true) ? '32-bit' : '64-bit'} process on 64-bit systems
                             </span>
                             {/* Info Tooltip */}
                             <div className="relative flex items-center">
@@ -340,7 +304,7 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
 
 
                  {/* Conditionally Render Advanced Settings (Command Lines & Requirement Rules) */}
-                 {showAdvancedSettings && (
+                 {(currentApp?.showAdvancedSettings || false) && ( // Read from currentApp prop
                     <div className="mt-4 p-4 border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 space-y-4">
                       <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">Advanced Configuration</h5>
 
@@ -377,7 +341,8 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                       <div className="pt-4 border-t border-gray-300 dark:border-gray-500">
                          <h6 className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Requirement Rules</h6>
                          <div className="space-y-4">
-                            {requirementRules.map((rule, index) => (
+                            {/* Read rules from currentApp prop, use default if undefined */}
+                            {(currentApp?.requirementRules || defaultRequirementRules).map((rule, index) => (
                               <div key={index} className="p-3 bg-white dark:bg-gray-600 rounded border border-gray-300 dark:border-gray-500">
                                 <div className="grid grid-cols-3 gap-3">
                                   {/* Detection Type */}
@@ -387,13 +352,16 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                                     </label>
                                     <select
                                       value={rule.detectionType}
-                                      onChange={(e) => {
-                                        const newRules = [...requirementRules];
-                                        newRules[index] = {
-                                          ...newRules[index],
-                                          detectionType: e.target.value as 'version' | 'architecture' | 'diskSpace' | 'ram'
-                                        };
-                                        setRequirementRules(newRules);
+                                      onChange={(e) => { // Update parent state
+                                        if (currentApp) {
+                                          const currentRules = currentApp.requirementRules || defaultRequirementRules;
+                                          const newRules = [...currentRules];
+                                          newRules[index] = {
+                                            ...newRules[index],
+                                            detectionType: e.target.value as RequirementRule['detectionType']
+                                          };
+                                          onUpdateApp(selectedIndex, { ...currentApp, requirementRules: newRules });
+                                        }
                                       }}
                                       disabled={isCurrentAppLocked}
                                       className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
@@ -412,13 +380,16 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                                     </label>
                                     <select
                                       value={rule.operator}
-                                      onChange={(e) => {
-                                        const newRules = [...requirementRules];
-                                        newRules[index] = {
-                                          ...newRules[index],
-                                          operator: e.target.value as 'greaterOrEqual' | 'equal' | 'lessOrEqual' | 'less' | 'greater' | 'notEqual'
-                                        };
-                                        setRequirementRules(newRules);
+                                      onChange={(e) => { // Update parent state
+                                        if (currentApp) {
+                                          const currentRules = currentApp.requirementRules || defaultRequirementRules;
+                                          const newRules = [...currentRules];
+                                          newRules[index] = {
+                                            ...newRules[index],
+                                            operator: e.target.value as RequirementRule['operator']
+                                          };
+                                          onUpdateApp(selectedIndex, { ...currentApp, requirementRules: newRules });
+                                        }
                                       }}
                                       disabled={isCurrentAppLocked}
                                       className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
@@ -440,13 +411,13 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                                     {rule.detectionType === 'architecture' ? (
                                       <select
                                         value={rule.value}
-                                        onChange={(e) => {
-                                          const newRules = [...requirementRules];
-                                          newRules[index] = {
-                                            ...newRules[index],
-                                            value: e.target.value
-                                          };
-                                          setRequirementRules(newRules);
+                                        onChange={(e) => { // Update parent state
+                                          if (currentApp) {
+                                            const currentRules = currentApp.requirementRules || defaultRequirementRules;
+                                            const newRules = [...currentRules];
+                                            newRules[index] = { ...newRules[index], value: e.target.value };
+                                            onUpdateApp(selectedIndex, { ...currentApp, requirementRules: newRules });
+                                          }
                                         }}
                                         disabled={isCurrentAppLocked}
                                         className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
@@ -460,16 +431,16 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                                       <input
                                         type="text"
                                         value={rule.value}
-                                        onChange={(e) => {
-                                          const newRules = [...requirementRules];
-                                          newRules[index] = {
-                                            ...newRules[index],
-                                            value: e.target.value
-                                          };
-                                          setRequirementRules(newRules);
+                                        onChange={(e) => { // Update parent state
+                                          if (currentApp) {
+                                            const currentRules = currentApp.requirementRules || defaultRequirementRules;
+                                            const newRules = [...currentRules];
+                                            newRules[index] = { ...newRules[index], value: e.target.value };
+                                            onUpdateApp(selectedIndex, { ...currentApp, requirementRules: newRules });
+                                          }
                                         }}
                                         disabled={isCurrentAppLocked}
-                                        placeholder={rule.detectionType === 'version' ? '10.0.10240' : 
+                                        placeholder={rule.detectionType === 'version' ? '10.0.10240' :
                                                     rule.detectionType === 'diskSpace' ? '1024 (MB)' : 
                                                     rule.detectionType === 'ram' ? '2048 (MB)' : ''}
                                         className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
@@ -479,12 +450,16 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                                 </div>
                                 
                                 {/* Remove Rule Button */}
-                                {requirementRules.length > 1 && (
+                                {/* Check length against currentApp's rules or default */}
+                                {(currentApp?.requirementRules || defaultRequirementRules).length > 1 && (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const newRules = requirementRules.filter((_, i) => i !== index);
-                                      setRequirementRules(newRules);
+                                    onClick={() => { // Update parent state
+                                      if (currentApp) {
+                                        const currentRules = currentApp.requirementRules || defaultRequirementRules;
+                                        const newRules = currentRules.filter((_, i) => i !== index);
+                                        onUpdateApp(selectedIndex, { ...currentApp, requirementRules: newRules });
+                                      }
                                     }}
                                     disabled={isCurrentAppLocked}
                                     className="mt-2 px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 disabled:text-gray-400 dark:disabled:text-gray-500"
@@ -498,14 +473,17 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                             {/* Add Rule Button */}
                             <button
                               type="button"
-                              onClick={() => {
-                                const newRule: RequirementRule = {
-                                  '@odata.type': '#microsoft.graph.win32LobAppRequirement',
-                                  operator: 'equal',
-                                  detectionType: 'version',
-                                  value: '10.0.10240',
-                                };
-                                setRequirementRules([...requirementRules, newRule]);
+                              onClick={() => { // Update parent state
+                                if (currentApp) {
+                                  const currentRules = currentApp.requirementRules || defaultRequirementRules;
+                                  const newRule: RequirementRule = { // Use imported type
+                                    '@odata.type': '#microsoft.graph.win32LobAppRequirement',
+                                    operator: 'equal',
+                                    detectionType: 'version',
+                                    value: '10.0.10240',
+                                  };
+                                  onUpdateApp(selectedIndex, { ...currentApp, requirementRules: [...currentRules, newRule] });
+                                }
                               }}
                               disabled={isCurrentAppLocked}
                               className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 dark:disabled:bg-gray-600"

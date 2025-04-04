@@ -25,8 +25,9 @@ Implementing custom PowerShell detection script input and requirement rules conf
 *   **(Previous)** Resolved Deployment Authentication Error (401) by refactoring `Add-App-to-Intune.ps1` to use direct Graph API calls instead of the `IntuneWin32App` module. Updated backend and Memory Bank accordingly.
 *   **(Previous)** Implemented PKCE (Proof Key for Code Exchange) in the OAuth 2.0 flow.
 *   **(Previous)** Refined OAuth 2.0 Authentication & Session Management.
-*   **(Previous)** Resolved Import Errors & Build Issues.
-*   **(Previous)** Adjusted Command Line Display & Fixed Modals/Dark Mode.
+    *   **(Previous)** Resolved Import Errors & Build Issues.
+    *   **(Previous)** Adjusted Command Line Display & Fixed Modals/Dark Mode.
+*   **Fixed CodeMirror Duplication:** Resolved an issue where the PowerShell detection script editor (CodeMirror) appeared twice in `DeploymentConfigModal.tsx`. The cause was an unnecessary dynamic `key={uuidv4()}` prop forcing component remounts. Removed the `key` prop to fix it.
 
 ## Authentication & Session Management Details (Still Active)
 *   **Flow:** Standard OAuth 2.0 Authorization Code Grant flow with PKCE.

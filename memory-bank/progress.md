@@ -58,6 +58,7 @@
 
 ## Known Issues
 *   **Frontend UI Not Updating After Login:** After successful OAuth login and redirect, the frontend UI (`TenantContext`) does not automatically reflect the logged-in state. The `checkStatus` call on load might be executing before the session cookie is fully available/set by the browser after the redirect, or there could be other timing/state propagation issues within React. Requires investigation.
+*   **(Resolved) CodeMirror Duplication:** The PowerShell detection script editor (CodeMirror) in `DeploymentConfigModal.tsx` was rendering twice due to an unnecessary dynamic `key={uuidv4()}` prop forcing remounts. Removed the `key` prop.
 *   **(Resolved)** "Connect to Tenant" feature hung due to attempting interactive PowerShell login from the backend. Replaced with backend-managed OAuth 2.0 flow using session cookies and token passing.
 *   **(Resolved)** Backend failed to load (`ModuleNotFoundError`, `ImportError`).
 *   **(Resolved)** Azure AD required PKCE (`AADSTS9002325`).

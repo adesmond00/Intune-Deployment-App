@@ -11,6 +11,8 @@ import React, { useState } from 'react';
 import { API_BASE_URL } from '../config'; // Import the configurable API base URL
 import DeploymentConfigModal from '../components/DeploymentConfigModal'; // Import the modal component
 import { deployAppsToIntune } from '../services/deploymentService';
+// Import types from the new types file
+import { StagedAppDeploymentInfo, RequirementRule, defaultRequirementRules } from '../types';
 
 /**
  * Interface representing the structure of a Winget application object
@@ -40,21 +42,7 @@ interface WingetSearchResponse {
  * It aligns with parameters needed by the Add-AppToIntune PowerShell script.
  * Fields requiring dedicated UI later are initialized to null or defaults.
  */
-// Export the interface so it can be imported by other components
-export interface StagedAppDeploymentInfo {
-  displayName: string; // Maps to $DisplayName, initially from wingetApp.name
-  id: string;          // The Winget ID, potentially used for install/uninstall commands
-  version: string;     // Version info from winget search
-  publisher: string | null; // Maps to $Publisher, initially null
-  description: string | null; // Maps to $Description, initially null
-  installCommandLine: string | null; // Maps to $InstallCommandLine, initially null
-  uninstallCommandLine: string | null; // Maps to $UninstallCommandLine, initially null
-  detectionRuleNotes: string | null; // Placeholder for detection rule info, initially null
-  requirementRuleNotes: string | null; // Placeholder for requirement rule info, initially null
-  installExperience: 'system' | 'user'; // Maps to $InstallExperience, default 'system'
-  restartBehavior: 'suppress' | 'force' | 'basedOnReturnCode'; // Maps to $RestartBehavior, default 'suppress'
-  isLocked: boolean; // Flag to indicate if the configuration is locked
-}
+// Interface definition moved to src/types.ts
 
 
 const WingetAppPage: React.FC = () => {
@@ -127,6 +115,11 @@ const WingetAppPage: React.FC = () => {
         installExperience: 'system',
         restartBehavior: 'suppress',
         isLocked: false, // Initialize as unlocked
+        // Initialize new configuration fields with defaults
+        detectionScript: '',
+        runAs32Bit: true,
+        requirementRules: defaultRequirementRules, // Use imported default rules
+        showAdvancedSettings: false,
       };
       setStagedApps([...stagedApps, newStagedApp]);
     } else {
