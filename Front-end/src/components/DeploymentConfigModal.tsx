@@ -136,27 +136,11 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
       {/* Modal Content - Added dark mode background */}
       <div className="relative w-full max-w-4xl bg-white dark:bg-gray-800 rounded-lg shadow-xl flex flex-col" style={{ maxHeight: '90vh' }}>
 
-        {/* Modal Header - Added dark mode border, text - Added Advanced Settings Toggle */}
+        {/* Modal Header - Added dark mode border, text */}
         <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Configure App Deployments ({appsToConfigure.length} apps)
           </h3>
-          {/* --- Advanced Settings Toggle --- */}
-          <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Show Advanced</span>
-              <button
-                type="button" // Prevent form submission
-                onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${showAdvancedSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                aria-checked={showAdvancedSettings}
-                role="switch"
-                disabled={isCurrentAppLocked} // Disable if locked
-              >
-                <div
-                  className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${showAdvancedSettings ? 'translate-x-5' : ''}`}
-                ></div>
-              </button>
-          </div>
           <button
             onClick={onClose}
             className="text-gray-400 bg-transparent hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-white rounded-lg text-sm p-1.5 ml-auto inline-flex items-center pl-4" // Added padding left
@@ -283,24 +267,47 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                     <p className="text-sm"><span className="font-semibold">Version:</span> {currentApp.version}</p>
                  </div>
 
+                 {/* --- Advanced Settings Toggle --- */}
+                 <div className="flex items-center justify-end mt-4 space-x-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Show Advanced</span>
+                    <button
+                      type="button" // Prevent form submission
+                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                      className={`w-11 h-6 flex items-center rounded-full p-1 duration-300 ease-in-out ${showAdvancedSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      aria-checked={showAdvancedSettings}
+                      role="switch"
+                      disabled={isCurrentAppLocked} // Disable if locked
+                    >
+                      <div
+                        className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${showAdvancedSettings ? 'translate-x-5' : ''}`}
+                      ></div>
+                    </button>
+                 </div>
+
                  {/* --- PowerShell Detection Script --- */}
                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
                     <label htmlFor={`detectionScript-${currentApp.id}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         PowerShell Detection Script
                     </label>
-                    <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden">
+                    {/* Fixed CodeMirror implementation to ensure only one instance is rendered */}
+                    <div className="border border-gray-300 dark:border-gray-600 rounded overflow-hidden" style={{ minHeight: "150px" }}>
                       <CodeMirror
+                        key={`codemirror-${currentApp?.id || 'default'}`} // Add key to ensure proper re-rendering
                         value={detectionScript}
                         options={{
                           mode: 'powershell',
-                          theme: 'material', // Make sure to import the theme CSS
+                          theme: 'material',
                           lineNumbers: true,
                           readOnly: isCurrentAppLocked,
+                          viewportMargin: Infinity, // Helps with proper sizing
+                          lineWrapping: true,
                         }}
                         onBeforeChange={handleScriptChange}
-                        editorDidMount={(_) => { // Use underscore for unused editor param
-                            // You can access the editor instance here if needed
-                            // _.setSize(null, 150); // Example: Set height
+                        editorDidMount={(editor) => {
+                          // Set explicit height to prevent duplicate rendering issues
+                          editor.setSize(null, 150);
+                          // Force a refresh to ensure proper rendering
+                          setTimeout(() => editor.refresh(), 50);
                         }}
                       />
                     </div>
@@ -369,13 +376,145 @@ const DeploymentConfigModal: React.FC<DeploymentConfigModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Requirement Rules */}
+                      {/* Requirement Rules - Editable UI */}
                       <div className="pt-4 border-t border-gray-300 dark:border-gray-500">
                          <h6 className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Requirement Rules</h6>
-                         {/* TODO: Implement actual inputs for requirement rules */}
-                         <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-600 p-2 rounded border border-gray-300 dark:border-gray-500">
-                            <pre>{JSON.stringify(requirementRules, null, 2)}</pre>
-                            <p className="mt-2 italic">(Placeholder: UI for editing rules to be added)</p>
+                         <div className="space-y-4">
+                            {requirementRules.map((rule, index) => (
+                              <div key={index} className="p-3 bg-white dark:bg-gray-600 rounded border border-gray-300 dark:border-gray-500">
+                                <div className="grid grid-cols-3 gap-3">
+                                  {/* Detection Type */}
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+                                      Detection Type
+                                    </label>
+                                    <select
+                                      value={rule.detectionType}
+                                      onChange={(e) => {
+                                        const newRules = [...requirementRules];
+                                        newRules[index] = {
+                                          ...newRules[index],
+                                          detectionType: e.target.value as 'version' | 'architecture' | 'diskSpace' | 'ram'
+                                        };
+                                        setRequirementRules(newRules);
+                                      }}
+                                      disabled={isCurrentAppLocked}
+                                      className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
+                                    >
+                                      <option value="version">Version</option>
+                                      <option value="architecture">Architecture</option>
+                                      <option value="diskSpace">Disk Space</option>
+                                      <option value="ram">RAM</option>
+                                    </select>
+                                  </div>
+                                  
+                                  {/* Operator */}
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+                                      Operator
+                                    </label>
+                                    <select
+                                      value={rule.operator}
+                                      onChange={(e) => {
+                                        const newRules = [...requirementRules];
+                                        newRules[index] = {
+                                          ...newRules[index],
+                                          operator: e.target.value as 'greaterOrEqual' | 'equal' | 'lessOrEqual' | 'less' | 'greater' | 'notEqual'
+                                        };
+                                        setRequirementRules(newRules);
+                                      }}
+                                      disabled={isCurrentAppLocked}
+                                      className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
+                                    >
+                                      <option value="equal">Equal (=)</option>
+                                      <option value="notEqual">Not Equal (!=)</option>
+                                      <option value="greaterOrEqual">Greater or Equal (&gt;=)</option>
+                                      <option value="greater">Greater Than (&gt;)</option>
+                                      <option value="lessOrEqual">Less or Equal (&lt;=)</option>
+                                      <option value="less">Less Than (&lt;)</option>
+                                    </select>
+                                  </div>
+                                  
+                                  {/* Value */}
+                                  <div>
+                                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+                                      Value
+                                    </label>
+                                    {rule.detectionType === 'architecture' ? (
+                                      <select
+                                        value={rule.value}
+                                        onChange={(e) => {
+                                          const newRules = [...requirementRules];
+                                          newRules[index] = {
+                                            ...newRules[index],
+                                            value: e.target.value
+                                          };
+                                          setRequirementRules(newRules);
+                                        }}
+                                        disabled={isCurrentAppLocked}
+                                        className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
+                                      >
+                                        <option value="x64">x64 (64-bit)</option>
+                                        <option value="x86">x86 (32-bit)</option>
+                                        <option value="arm">ARM</option>
+                                        <option value="arm64">ARM64</option>
+                                      </select>
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={rule.value}
+                                        onChange={(e) => {
+                                          const newRules = [...requirementRules];
+                                          newRules[index] = {
+                                            ...newRules[index],
+                                            value: e.target.value
+                                          };
+                                          setRequirementRules(newRules);
+                                        }}
+                                        disabled={isCurrentAppLocked}
+                                        placeholder={rule.detectionType === 'version' ? '10.0.10240' : 
+                                                    rule.detectionType === 'diskSpace' ? '1024 (MB)' : 
+                                                    rule.detectionType === 'ram' ? '2048 (MB)' : ''}
+                                        className="w-full p-1 text-xs border border-gray-300 dark:border-gray-500 rounded shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-200 dark:disabled:bg-gray-600"
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                                
+                                {/* Remove Rule Button */}
+                                {requirementRules.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const newRules = requirementRules.filter((_, i) => i !== index);
+                                      setRequirementRules(newRules);
+                                    }}
+                                    disabled={isCurrentAppLocked}
+                                    className="mt-2 px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 disabled:text-gray-400 dark:disabled:text-gray-500"
+                                  >
+                                    Remove Rule
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            
+                            {/* Add Rule Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newRule: RequirementRule = {
+                                  '@odata.type': '#microsoft.graph.win32LobAppRequirement',
+                                  operator: 'equal',
+                                  detectionType: 'version',
+                                  value: '10.0.10240',
+                                };
+                                setRequirementRules([...requirementRules, newRule]);
+                              }}
+                              disabled={isCurrentAppLocked}
+                              className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 dark:disabled:bg-gray-600"
+                            >
+                              Add Requirement Rule
+                            </button>
                          </div>
                       </div>
 
