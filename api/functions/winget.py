@@ -69,12 +69,9 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
     lines = raw_output.strip().split('\n')
 
     header_index = -1
-    # More robust regex for header, anchored and allowing whitespace variations
-    # header_pattern = re.compile(r"^\\s*Name\\s+Id\\s+Version\\s+(?:Match\\s+)?Source\\s*$", re.IGNORECASE)
-    # --- DEBUG: Temporarily simplify pattern ---
-    header_pattern = re.compile(r"Name.*Id.*Version.*Source", re.IGNORECASE) 
-    print("DEBUG: Using simplified header pattern.")
-    # --- End DEBUG ---
+    # Restore original stricter header pattern
+    header_pattern = re.compile(r"^\\s*Name\\s+Id\\s+Version\\s+(?:Match\\s+)?Source\\s*$", re.IGNORECASE)
+    # print("DEBUG: Using simplified header pattern.") # Remove debug print
     # Removed separator_pattern as it's unreliable
 
     # Find header line, skipping potential initial junk lines
@@ -82,16 +79,16 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
         line_strip = line.strip()
         # Skip blank lines or placeholder dashes
         if not line_strip or line_strip == '-':
-            # print(f"DEBUG: Skipping line {i}: '{line_strip}'") # Optional debug
+            # print(f"DEBUG: Skipping line {i}: '{line_strip}'") # Remove debug print
             continue
 
         # --- DEBUGGING START ---
-        print(f"DEBUG: Testing line {i}: '{line_strip}'")
+        # print(f"DEBUG: Testing line {i}: '{line_strip}'") # Remove debug print
         # --- DEBUGGING END ---
         
         if header_pattern.search(line_strip):
             header_index = i
-            # print(f"DEBUG: Found header at index {header_index} with pattern: '{line_strip}'") # DEBUG
+            # print(f"DEBUG: Found header at index {header_index} with pattern: '{line_strip}'") # Remove debug print
             break # Found header
 
     if header_index == -1:
@@ -102,35 +99,36 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
              print(f"  {k}: {lines[k]}")
         return []
 
-    # Find column start indices based on column names in the header line
+    # Find column start indices using regex word boundaries on the header line
     header_line = lines[header_index]
     try:
-        # Find the starting index of each column name. Use lower() for case-insensitivity.
-        # Add padding spaces to avoid matching substrings (e.g., 'Version' inside another word)
-        header_lower = header_line.lower()
-        name_start = 0 # Name always starts at 0
-        id_start = header_lower.index(' id ') # Look for ' id ' with spaces
-        version_start = header_lower.index(' version ')
+        # Find the start index of each column name using word boundaries (\b)
+        name_match = re.search(r'\bName\b', header_line, re.IGNORECASE)
+        id_match = re.search(r'\bId\b', header_line, re.IGNORECASE)
+        version_match = re.search(r'\bVersion\b', header_line, re.IGNORECASE)
+        match_match = re.search(r'\bMatch\b', header_line, re.IGNORECASE) # Optional
+        source_match = re.search(r'\bSource\b', header_line, re.IGNORECASE)
+
+        # Ensure required columns were found
+        if not (name_match and id_match and version_match and source_match):
+            raise ValueError("Required column names (Name, Id, Version, Source) not found in header")
+
+        name_start = name_match.start()
+        id_start = id_match.start()
+        version_start = version_match.start()
+        match_start = match_match.start() if match_match else -1
+        source_start = source_match.start()
         
-        # Handle optional 'Match' column
-        match_start = -1
-        try:
-            match_start = header_lower.index(' match ')
-        except ValueError:
-            pass # Match column not found
-            
-        source_start = header_lower.index(' source ')
+        # print(f"DEBUG: Column Starts - Name:{name_start}, Id:{id_start}, Version:{version_start}, Match:{match_start}, Source:{source_start}") # Remove debug print
 
-        # print(f"DEBUG: Column Starts - Name:{name_start}, Id:{id_start}, Version:{version_start}, Match:{match_start}, Source:{source_start}")
-
-    except ValueError as e:
-        print(f"Could not find required column names ('Id', 'Version', 'Source') in header line: '{header_line}'. Error: {e}")
+    except (ValueError, AttributeError) as e: # Catch AttributeError if .start() is called on None
+        print(f"Error parsing header line to find column start indices: '{header_line}'. Error: {e}")
         return []
 
     # Process data lines starting 2 lines after the header
     start_data_line_index = header_index + 2
     if start_data_line_index >= len(lines):
-        print("No data lines found after header and separator.")
+        print("No data lines found after header.") # Updated message
         return []
         
     for line_num, line in enumerate(lines[start_data_line_index:], start=start_data_line_index):
@@ -143,6 +141,7 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
         line_len = len(line_for_slicing)
 
         # Slice data based on the start indices found in the header
+        # End slice index is the start of the next column
         name = line_for_slicing[name_start:id_start].strip() if line_len > name_start else ""
         id_part = line_for_slicing[id_start:version_start].strip() if line_len > id_start else ""
         
@@ -150,6 +149,13 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
         version_end = match_start if match_start != -1 else source_start
         version = line_for_slicing[version_start:version_end].strip() if line_len > version_start else ""
         
+        # Determine end point for Match slice (if Match exists) or Source slice
+        if match_start != -1:
+             # Slice Match from match_start to source_start
+             # match_content = line_for_slicing[match_start:source_start].strip() if line_len > match_start else "" 
+             # We don't actually need the Match content for the output JSON
+             pass # Just use its start index to correctly end Version and start Source
+
         # Source is from source_start to the end of the line
         source = line_for_slicing[source_start:].strip() if line_len > source_start else ""
 
@@ -165,6 +171,5 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
             "Source": source
         })
 
-    # Restore original header pattern and remove debug prints if successful
-    # print("DEBUG: Returning successfully parsed apps.")
+    # print("DEBUG: Returning successfully parsed apps.") # Remove debug print
     return apps
