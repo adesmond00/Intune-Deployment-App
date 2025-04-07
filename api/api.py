@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from typing import Optional, List, Dict
 # Use relative import since api.py is inside the 'api' directory
-from .functions.winget import search_package, parse_winget_output
+from .functions.winget import search_winget_packages
 
 app = FastAPI(title="Intune Deployment API")
 
@@ -17,24 +17,13 @@ async def search_applications_json(search_term: str):
     
     Returns a list of applications with Name, Id, Version, and Source fields.
     """
-    result = search_package(search_term)
-    
-    if result.get("status") == "error":
-        # Log the error for debugging
-        print(f"Winget search error: {result.get('error') or result.get('message')}") 
-        raise HTTPException(status_code=500, detail=result.get("error") or result.get("message", "Unknown error during winget search"))
-    
-    # Parse the output using the dedicated function
-    raw_output = result.get("output", "")
-    apps = parse_winget_output(raw_output)
-    
-    # Optional: Log if parsing returned empty list from non-empty output
-    if raw_output and not apps:
-        print(f"Parsing winget output resulted in empty list despite receiving output. Raw output length: {len(raw_output)}")
-        # Uncomment below to log the actual raw output for debugging (can be long)
-        print(f"Raw output was:\n{raw_output}") # Temporarily uncommented for debugging
-        
-    return apps
+    try:
+        apps = search_winget_packages(search_term)
+        if not apps:
+            raise HTTPException(status_code=404, detail="No applications found matching the search term")
+        return apps
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
