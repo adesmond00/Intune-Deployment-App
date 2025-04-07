@@ -114,6 +114,11 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
     # Use the separator line structure to find column boundaries
     space_indices = [match.start() for match in re.finditer(r"\\s{2,}", separator_line)] # Find gaps of 2+ spaces
 
+    # --- DEBUGGING START ---
+    print(f"DEBUG: Separator line is: '{separator_line}'")
+    print(f"DEBUG: Found space indices in separator: {space_indices}")
+    # --- DEBUGGING END ---
+
     # We need at least 3 gaps for Name, Id, Version, Source (4 columns)
     # If 'Match' is present, we expect 4 gaps.
     if len(space_indices) < 3:
