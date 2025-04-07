@@ -1,25 +1,21 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from typing import Optional
 # Use relative import since api.py is inside the 'api' directory
 from .functions.winget import search_package
 
 app = FastAPI(title="Intune Deployment API")
 
-class SearchRequest(BaseModel):
-    search_term: str
-
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Intune Deployment API"}
 
-# Changed the method to POST as GET requests typically don't have a request body.
-@app.post("/search") # Changed to POST to accept request body
-async def search_applications(request: SearchRequest):
+@app.get("/search")
+async def search_applications(search_term: str):  # Accept search_term directly as a query parameter
     """
-    Search for applications using winget
+    Search for applications using winget.
+    Pass the search term as a query parameter, e.g., /search?search_term=vscode
     """
-    result = search_package(request.search_term)
+    result = search_package(search_term)  # Use the search_term variable directly
     # Add error handling based on the status returned by search_package
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error") or result.get("message", "Unknown error during winget search"))
