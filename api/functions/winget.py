@@ -150,9 +150,13 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
         version = line_for_slicing[id_end:version_end].strip() if len(line_for_slicing) > id_end else ""
         source = line_for_slicing[source_start:].strip() if len(line_for_slicing) > source_start else ""
 
+        # --- DEBUGGING START ---
+        print(f"DEBUG line {line_num}: Extracted Name='{name}', ID='{id_part}'")
+        # --- DEBUGGING END ---
+
         # Basic validation: require Name and Id at minimum
         if not name or not id_part:
-           # print(f"Skipping line {line_num} due to missing Name/ID: '{line_stripped}'") # DEBUG
+           print(f"Skipping line {line_num} due to missing Name/ID: '{line_stripped}'") # Temporarily uncommented
            continue
 
         apps.append({
