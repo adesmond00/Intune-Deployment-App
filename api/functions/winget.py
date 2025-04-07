@@ -69,106 +69,98 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
     lines = raw_output.strip().split('\n')
 
     header_index = -1
-    separator_index = -1
-    # More robust regex for header and separator, anchored and allowing whitespace variations
-    # Ensures 'Match' is treated as optional in the header pattern
+    # More robust regex for header, anchored and allowing whitespace variations
     header_pattern = re.compile(r"^\\s*Name\\s+Id\\s+Version\\s+(?:Match\\s+)?Source\\s*$", re.IGNORECASE)
-    # Ensures the separator pattern matches the structure including the optional 'Match' column dashes
-    separator_pattern = re.compile(r"^\\s*-+\\s+-+\\s+-+\\s+(?:-+\\s+)?-+\\s*$")
+    # Removed separator_pattern as it's unreliable
 
-    # Find header and separator, skipping potential initial junk lines
+    # Find header line, skipping potential initial junk lines
     for i, line in enumerate(lines):
-        # Skip obviously non-header lines early (blank, placeholder dashes etc.)
         line_strip = line.strip()
+        # Skip blank lines or placeholder dashes
         if not line_strip or line_strip == '-':
             continue
 
         if header_pattern.search(line_strip):
-            # Found potential header, now look for separator on subsequent non-blank lines
-            for j in range(i + 1, len(lines)):
-                next_line = lines[j]
-                next_line_strip = next_line.strip()
-                if not next_line_strip: # Skip blank lines between header and separator
-                    continue
-                if separator_pattern.search(next_line_strip):
-                    header_index = i
-                    separator_index = j
-                    # print(f"DEBUG: Found header at {header_index}, separator at {separator_index}") # DEBUG
-                    break # Found both header and separator
-                else:
-                    # Found header, but the next non-blank line wasn't the expected separator
-                    # print(f"DEBUG: Found header at {i}, but line {j} ('{next_line_strip}') is not separator.") # DEBUG
-                    break # Stop looking for separator for this potential header
-        if header_index != -1: # Stop searching lines once we've found the pair
-             break
+            header_index = i
+            # print(f"DEBUG: Found header at index {header_index}: '{line_strip}'") # DEBUG
+            break # Found header, no need to look for separator
 
-    if header_index == -1 or separator_index == -1:
-        print(f"Could not find expected header/separator sequence in winget output.")
+    if header_index == -1:
+        print(f"Could not find expected header line ('Name Id Version...') in winget output.")
         # Log first few lines for context if failed
         print("First few lines of output:")
         for k in range(min(10, len(lines))):
              print(f"  {k}: {lines[k]}")
         return []
 
-    separator_line = lines[separator_index]
-    # Use the separator line structure to find column boundaries
-    space_indices = [match.start() for match in re.finditer(r"\\s{2,}", separator_line)] # Find gaps of 2+ spaces
+    # Use the *header* line structure to find column boundaries
+    header_line = lines[header_index]
+    # Find gaps of 2+ spaces in the header line
+    space_indices = [match.start() for match in re.finditer(r"\s{2,}", header_line)]
 
     # --- DEBUGGING START ---
-    print(f"DEBUG: Separator line is: '{separator_line}'")
-    print(f"DEBUG: Found space indices in separator: {space_indices}")
+    print(f"DEBUG: Header line is: '{header_line}'")
+    print(f"DEBUG: Found space indices in header: {space_indices}")
     # --- DEBUGGING END ---
 
     # We need at least 3 gaps for Name, Id, Version, Source (4 columns)
-    # If 'Match' is present, we expect 4 gaps.
+    # If 'Match' column header is present, we expect 4 gaps.
     if len(space_indices) < 3:
-         print(f"Could not determine sufficient column separators from separator line: '{separator_line}' (Found {len(space_indices)} gaps)")
+         print(f"Could not determine sufficient column separators from header line: '{header_line}' (Found {len(space_indices)} gaps)")
          return []
 
-    # Determine column boundaries from separator gaps
+    # Determine column boundaries from header gaps
     try:
         name_end = space_indices[0]
         id_end = space_indices[1]
         version_end = space_indices[2]
-        # Check if 'Match' column seems present based on a 4th gap in the separator
+        # Check if 'Match' header seems present based on a 4th gap
         has_match_column = len(space_indices) > 3
-        source_start = space_indices[3] + 1 if has_match_column else version_end + 1 # Start after the gap ending the previous column
+        # Source starts after the gap ending the previous column (Version or Match)
+        source_start = space_indices[3] + 1 if has_match_column else version_end + 1
         # print(f"DEBUG: Columns - NameEnd:{name_end}, IdEnd:{id_end}, VerEnd:{version_end}, SrcStart:{source_start}, HasMatch:{has_match_column}") # DEBUG
     except IndexError:
         # This shouldn't happen if len(space_indices) >= 3, but guard anyway
-        print(f"Separator line parsing error (IndexError): {separator_line}")
+        print(f"Header line parsing error (IndexError): {header_line}")
         return []
 
-    # Process data lines starting after the separator
-    for line_num, line in enumerate(lines[separator_index + 1:], start=separator_index + 1):
+    # Process data lines starting 2 lines after the header (skipping header and separator)
+    start_data_line_index = header_index + 2
+    if start_data_line_index >= len(lines):
+        print("No data lines found after header and separator.")
+        return [] # No data lines to process
+        
+    for line_num, line in enumerate(lines[start_data_line_index:], start=start_data_line_index):
         line_stripped = line.strip()
         if not line_stripped:
             continue
 
-        # Use rstrip() on original line to preserve leading space for slicing, aids column alignment
+        # Use rstrip() on original line to preserve leading space for slicing
         line_for_slicing = line.rstrip()
 
-        # Extract based on separator indices
-        # Ensure slicing doesn't go out of bounds if line is unexpectedly short
+        # Extract based on header indices
         name = line_for_slicing[:name_end].strip()
+        # Add checks for line length before slicing to prevent errors
         id_part = line_for_slicing[name_end:id_end].strip() if len(line_for_slicing) > name_end else ""
         version = line_for_slicing[id_end:version_end].strip() if len(line_for_slicing) > id_end else ""
         source = line_for_slicing[source_start:].strip() if len(line_for_slicing) > source_start else ""
 
         # --- DEBUGGING START ---
-        print(f"DEBUG line {line_num}: Extracted Name='{name}', ID='{id_part}'")
+        # print(f"DEBUG line {line_num}: Extracted Name='{name}', ID='{id_part}'")
         # --- DEBUGGING END ---
 
         # Basic validation: require Name and Id at minimum
         if not name or not id_part:
-           print(f"Skipping line {line_num} due to missing Name/ID: '{line_stripped}'") # Temporarily uncommented
+           # print(f"Skipping line {line_num} due to missing Name/ID: '{line_stripped}'") # Temporarily uncommented
            continue
 
         apps.append({
             "Name": name,
             "Id": id_part,
-            "Version": version, # Keep version even if empty
+            "Version": version,
             "Source": source
         })
 
+    # Remove debug prints added previously as they are no longer needed for the separator
+    # The loop debug prints are commented out but can be re-enabled if needed
     return apps
