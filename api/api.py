@@ -32,7 +32,7 @@ async def search_applications_json(search_term: str):
     if raw_output and not apps:
         print(f"Parsing winget output resulted in empty list despite receiving output. Raw output length: {len(raw_output)}")
         # Uncomment below to log the actual raw output for debugging (can be long)
-        # print(f"Raw output was:\n{raw_output}")
+        print(f"Raw output was:\n{raw_output}") # Temporarily uncommented for debugging
         
     return apps
 
