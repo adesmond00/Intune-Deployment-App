@@ -70,7 +70,11 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
 
     header_index = -1
     # More robust regex for header, anchored and allowing whitespace variations
-    header_pattern = re.compile(r"^\\s*Name\\s+Id\\s+Version\\s+(?:Match\\s+)?Source\\s*$", re.IGNORECASE)
+    # header_pattern = re.compile(r"^\\s*Name\\s+Id\\s+Version\\s+(?:Match\\s+)?Source\\s*$", re.IGNORECASE)
+    # --- DEBUG: Temporarily simplify pattern ---
+    header_pattern = re.compile(r"Name.*Id.*Version.*Source", re.IGNORECASE) 
+    print("DEBUG: Using simplified header pattern.")
+    # --- End DEBUG ---
     # Removed separator_pattern as it's unreliable
 
     # Find header line, skipping potential initial junk lines
@@ -78,11 +82,16 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
         line_strip = line.strip()
         # Skip blank lines or placeholder dashes
         if not line_strip or line_strip == '-':
+            # print(f"DEBUG: Skipping line {i}: '{line_strip}'") # Optional debug
             continue
 
+        # --- DEBUGGING START ---
+        print(f"DEBUG: Testing line {i}: '{line_strip}'")
+        # --- DEBUGGING END ---
+        
         if header_pattern.search(line_strip):
             header_index = i
-            # print(f"DEBUG: Found header at index {header_index}: '{line_strip}'") # DEBUG
+            print(f"DEBUG: Found header at index {header_index} with pattern: '{line_strip}'") # DEBUG
             break # Found header, no need to look for separator
 
     if header_index == -1:
