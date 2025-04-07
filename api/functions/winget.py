@@ -91,8 +91,8 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
         
         if header_pattern.search(line_strip):
             header_index = i
-            print(f"DEBUG: Found header at index {header_index} with pattern: '{line_strip}'") # DEBUG
-            break # Found header, no need to look for separator
+            # print(f"DEBUG: Found header at index {header_index} with pattern: '{line_strip}'") # DEBUG
+            break # Found header
 
     if header_index == -1:
         print(f"Could not find expected header line ('Name Id Version...') in winget output.")
@@ -102,65 +102,60 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
              print(f"  {k}: {lines[k]}")
         return []
 
-    # Use the *header* line structure to find column boundaries
+    # Find column start indices based on column names in the header line
     header_line = lines[header_index]
-    # Find gaps of 2+ spaces in the header line
-    space_indices = [match.start() for match in re.finditer(r"\s{2,}", header_line)]
-
-    # --- DEBUGGING START ---
-    print(f"DEBUG: Header line is: '{header_line}'")
-    print(f"DEBUG: Found space indices in header: {space_indices}")
-    # --- DEBUGGING END ---
-
-    # We need at least 3 gaps for Name, Id, Version, Source (4 columns)
-    # If 'Match' column header is present, we expect 4 gaps.
-    if len(space_indices) < 3:
-         print(f"Could not determine sufficient column separators from header line: '{header_line}' (Found {len(space_indices)} gaps)")
-         return []
-
-    # Determine column boundaries from header gaps
     try:
-        name_end = space_indices[0]
-        id_end = space_indices[1]
-        version_end = space_indices[2]
-        # Check if 'Match' header seems present based on a 4th gap
-        has_match_column = len(space_indices) > 3
-        # Source starts after the gap ending the previous column (Version or Match)
-        source_start = space_indices[3] + 1 if has_match_column else version_end + 1
-        # print(f"DEBUG: Columns - NameEnd:{name_end}, IdEnd:{id_end}, VerEnd:{version_end}, SrcStart:{source_start}, HasMatch:{has_match_column}") # DEBUG
-    except IndexError:
-        # This shouldn't happen if len(space_indices) >= 3, but guard anyway
-        print(f"Header line parsing error (IndexError): {header_line}")
+        # Find the starting index of each column name. Use lower() for case-insensitivity.
+        # Add padding spaces to avoid matching substrings (e.g., 'Version' inside another word)
+        header_lower = header_line.lower()
+        name_start = 0 # Name always starts at 0
+        id_start = header_lower.index(' id ') # Look for ' id ' with spaces
+        version_start = header_lower.index(' version ')
+        
+        # Handle optional 'Match' column
+        match_start = -1
+        try:
+            match_start = header_lower.index(' match ')
+        except ValueError:
+            pass # Match column not found
+            
+        source_start = header_lower.index(' source ')
+
+        # print(f"DEBUG: Column Starts - Name:{name_start}, Id:{id_start}, Version:{version_start}, Match:{match_start}, Source:{source_start}")
+
+    except ValueError as e:
+        print(f"Could not find required column names ('Id', 'Version', 'Source') in header line: '{header_line}'. Error: {e}")
         return []
 
-    # Process data lines starting 2 lines after the header (skipping header and separator)
+    # Process data lines starting 2 lines after the header
     start_data_line_index = header_index + 2
     if start_data_line_index >= len(lines):
         print("No data lines found after header and separator.")
-        return [] # No data lines to process
+        return []
         
     for line_num, line in enumerate(lines[start_data_line_index:], start=start_data_line_index):
         line_stripped = line.strip()
         if not line_stripped:
             continue
 
-        # Use rstrip() on original line to preserve leading space for slicing
+        # Use rstrip() to preserve leading space for slicing
         line_for_slicing = line.rstrip()
+        line_len = len(line_for_slicing)
 
-        # Extract based on header indices
-        name = line_for_slicing[:name_end].strip()
-        # Add checks for line length before slicing to prevent errors
-        id_part = line_for_slicing[name_end:id_end].strip() if len(line_for_slicing) > name_end else ""
-        version = line_for_slicing[id_end:version_end].strip() if len(line_for_slicing) > id_end else ""
-        source = line_for_slicing[source_start:].strip() if len(line_for_slicing) > source_start else ""
+        # Slice data based on the start indices found in the header
+        name = line_for_slicing[name_start:id_start].strip() if line_len > name_start else ""
+        id_part = line_for_slicing[id_start:version_start].strip() if line_len > id_start else ""
+        
+        # Determine end point for version slice (depends if Match exists)
+        version_end = match_start if match_start != -1 else source_start
+        version = line_for_slicing[version_start:version_end].strip() if line_len > version_start else ""
+        
+        # Source is from source_start to the end of the line
+        source = line_for_slicing[source_start:].strip() if line_len > source_start else ""
 
-        # --- DEBUGGING START ---
-        # print(f"DEBUG line {line_num}: Extracted Name='{name}', ID='{id_part}'")
-        # --- DEBUGGING END ---
-
-        # Basic validation: require Name and Id at minimum
+        # Basic validation: require Name and Id
         if not name or not id_part:
-           # print(f"Skipping line {line_num} due to missing Name/ID: '{line_stripped}'") # Temporarily uncommented
+           # print(f"Skipping line {line_num} due to missing Name/ID: '{line_stripped}'")
            continue
 
         apps.append({
@@ -170,6 +165,6 @@ def parse_winget_output(raw_output: str) -> List[Dict[str, str]]:
             "Source": source
         })
 
-    # Remove debug prints added previously as they are no longer needed for the separator
-    # The loop debug prints are commented out but can be re-enabled if needed
+    # Restore original header pattern and remove debug prints if successful
+    # print("DEBUG: Returning successfully parsed apps.")
     return apps
