@@ -11,16 +11,21 @@ import logging
 import time
 from typing import Dict, Any, List
 import json
+import zipfile
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
+
+# Set the specific logger for intune_deploy to DEBUG level
+intune_deploy_logger = logging.getLogger('api.functions.intune_deploy')
+intune_deploy_logger.setLevel(logging.DEBUG)
 
 # Add parent directory to path to import from api
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from api.functions.intune_deploy import deploy_win32_app
-from api.functions.auth import get_access_token
+from api.functions.auth import get_access_token, get_auth_headers
 
 def test_real_deployment():
     """
@@ -42,6 +47,22 @@ def test_real_deployment():
     logger.info(f"Found .intunewin file at: {test_file_path}")
     logger.info(f"File size: {os.path.getsize(test_file_path)} bytes")
     
+    # --- Inspect detection.xml --- 
+    logger.info("--- Inspecting detection.xml --- ")
+    detection_xml_path_in_zip = "IntuneWinPackage/Metadata/Detection.xml"
+    try:
+        with zipfile.ZipFile(test_file_path, 'r') as archive:
+            if detection_xml_path_in_zip in archive.namelist():
+                with archive.open(detection_xml_path_in_zip) as xml_file:
+                    xml_content = xml_file.read().decode('utf-8')
+                    logger.info(f"Content of {detection_xml_path_in_zip}:\n{xml_content}")
+            else:
+                logger.error(f"{detection_xml_path_in_zip} not found in the archive.")
+    except Exception as e:
+        logger.error(f"Error inspecting detection.xml: {e}")
+    logger.info("--- Finished inspecting detection.xml --- ")
+    # ------------------------------
+
     # Define detection rules (required for Windows apps)
     detection_rules = [
         {

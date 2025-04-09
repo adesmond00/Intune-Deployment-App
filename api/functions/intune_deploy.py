@@ -11,6 +11,8 @@ import logging
 import time
 import requests
 import os
+import zipfile
+import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Union, Any, Tuple
 
 # Import our authentication module
@@ -275,111 +277,90 @@ def deploy_win32_app(
         
         # Step 3: Get content upload URLs
         logger.info("Step 3: Getting content upload URLs...")
-        file_size = os.path.getsize(intunewin_file_path)
-        logger.info(f"Intunewin file size: {file_size} bytes")
-        
-        # Check if file is too small - warn but proceed
-        if file_size < 5000:
-            logger.warning(
-                f"Warning: .intunewin file is very small ({file_size} bytes). "
-                "Typical .intunewin files are much larger. This might not be a valid package."
-            )
-        
         upload_urls_result = get_content_upload_urls(headers, app_id, content_version_id, intunewin_file_path)
-        if upload_urls_result.get("uploadState") == "azureStorageUriRequestPending":
-            logger.info("Upload URL is not ready yet (azureStorageUriRequestPending). Polling for availability...")
-            upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id, upload_urls_result.get("files")[0].get("id"))
-            if "error" in upload_urls_result:
-                return upload_urls_result
+
+        # Check for errors first
         if "error" in upload_urls_result:
+            logger.error(f"Failed to get upload URLs: {upload_urls_result['error']}")
             return upload_urls_result
+
+        # Extract URL and file ID
+        upload_url = upload_urls_result.get("upload_url")
+        file_id = upload_urls_result.get("file_id")
+
+        if not upload_url or not file_id:
+            logger.error("Missing upload_url or file_id in the response from get_content_upload_urls.")
+            details = upload_urls_result.get("details", "No additional details provided.") # Provide details if possible
+            return {"error": "Missing upload URL or file ID.", "details": details}
+
+        logger.info(f"Successfully obtained upload URL and file ID: {file_id}")
         
-        # Step 4: Poll for the upload URL if needed
-        if "files" in upload_urls_result and upload_urls_result["files"]:
-            file_info = upload_urls_result["files"][0]
-            if "uploadState" in file_info and file_info["uploadState"] == "azureStorageUriRequestPending":
-                logger.info("Upload URL not immediately available. Starting polling process...")
-                upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id, file_info.get("id"))
-                
-                if "error" in upload_urls_result:
-                    return upload_urls_result
-        
-        # Step 5: Upload the .intunewin file
-        logger.info("Step 5: Uploading .intunewin file...")
-        
-        # Log the full response structure to understand what fields are available
-        logger.info(f"Upload URLs response structure: {json.dumps(upload_urls_result, indent=2)}")
-        
-        # Try to extract the upload URL using different possible field names
-        upload_url = None
-        
-        # Check if response contains the azureStorageUri
-        if "azureStorageUri" in upload_urls_result and upload_urls_result["azureStorageUri"]:
-            upload_url = upload_urls_result.get("azureStorageUri")
-            logger.info(f"Found azureStorageUri: {upload_url}")
-        # Check alternative field names that might be used
-        elif "uploadUrl" in upload_urls_result and upload_urls_result["uploadUrl"]:
-            upload_url = upload_urls_result.get("uploadUrl")
-            logger.info(f"Found uploadUrl: {upload_url}")
-        # Check if we have a files array with URLs
-        elif "files" in upload_urls_result and upload_urls_result["files"]:
-            logger.info(f"Found files array with {len(upload_urls_result['files'])} items")
-            # Get the first file's upload URL
-            first_file = upload_urls_result["files"][0]
-            logger.info(f"First file keys: {list(first_file.keys())}")
-            if "uploadUrl" in first_file and first_file["uploadUrl"]:
-                upload_url = first_file.get("uploadUrl")
-                logger.info(f"Found uploadUrl in files array: {upload_url}")
-            elif "sasUrl" in first_file and first_file["sasUrl"]:
-                upload_url = first_file.get("sasUrl")
-                logger.info(f"Found sasUrl in files array: {upload_url}")
-            elif "azureStorageUri" in first_file and first_file["azureStorageUri"]:
-                upload_url = first_file.get("azureStorageUri")
-                logger.info(f"Found azureStorageUri in files array: {upload_url}")
-        
-        # If we still don't have a URL, check for any URL-like string in the response
-        if not upload_url:
-            # Look for any field with 'url' in the name at top level
-            for key, value in upload_urls_result.items():
-                if "url" in key.lower() and isinstance(value, str) and value.startswith("http"):
-                    upload_url = value
-                    logger.info(f"Found URL in field {key}: {upload_url}")
-                    break
-            
-            # Log the full final response JSON when the URL is missing despite success state
-            logger.error(f"No valid upload URL found in response. Full response JSON: {json.dumps(upload_urls_result, indent=2)}")
-            return {"error": "No upload URL found in the response"}
-            
-        logger.info(f"Final upload URL: {upload_url}")
+        # Step 4: Upload the .intunewin file
+        logger.info("Step 4: Uploading .intunewin file...")
+        logger.info(f"Using upload URL: {upload_url[:upload_url.find('?')+1]}... (SAS token hidden)") # Log URL without SAS token
         
         upload_result = upload_intunewin_file(upload_url, intunewin_file_path)
+        
         if not upload_result:
-            logger.error("File upload failed.")
-            return {"error": "Failed to upload .intunewin file to Azure Storage"}
-        
+            # upload_intunewin_file logs specifics, just return generic error here
+            logger.error("Failed to upload .intunewin file.")
+            return {"error": "File upload failed"} # Keep error simple as function logs details
+
         logger.info("Successfully uploaded .intunewin file")
-        
-        # Wait after upload to ensure Intune processes the file
-        logger.info("Waiting after file upload (10 seconds)...")
-        time.sleep(10)
-        
+
+        # Step 5: Commit Content Version
+        # Extract fileEncryptionInfo from the .intunewin file
+        logger.info(f"Extracting file encryption info from {intunewin_file_path}...")
+        file_encryption_info_dict = extract_file_encryption_info(intunewin_file_path)
+
+        if file_encryption_info_dict is None:
+            logger.error("Failed to extract file encryption info. Cannot proceed with commit.")
+            return {"error": "Failed to extract file encryption info from .intunewin file."}
+            
+        logger.info(f"Successfully extracted fileEncryptionInfo.") # Avoid logging potentially sensitive keys
+
         # Step 6: Commit the content version
         logger.info("Step 6: Committing content version...")
-        commit_result = commit_content_version(headers, app_id, content_version_id)
+        # Log the encryption info being sent
+        logger.info(f"Using FileEncryptionInfo for commit: {json.dumps(file_encryption_info_dict, indent=2)}") 
+        encryption_info_with_type = file_encryption_info_dict.copy()
+        encryption_info_with_type['@odata.type'] = 'microsoft.graph.fileEncryptionInfo'
+        commit_result = commit_content_version(headers, app_id, content_version_id, file_id, encryption_info_with_type)
+        
         if "error" in commit_result:
+            # Log the specific error from commit_content_version if available
+            commit_details = commit_result.get("details", "No details provided.")
+            logger.error(f"Failed to commit content version: {commit_result['error']}. Details: {commit_details}")
             return commit_result
         
         logger.info("Successfully committed content version")
         
-        # Final step: Update the app with the committed content version ID
-        logger.info("Final step: Updating app with content version ID...")
-        update_url = f"{GRAPH_API_ENDPOINT}/deviceAppManagement/mobileApps/{app_id}"
+        # Step 6a: Poll for commit completion
+        logger.info("Step 6a: Polling for commit processing completion...")
+        poll_commit_result = poll_for_commit_status(headers, app_id, content_version_id, file_id)
+
+        if "error" in poll_commit_result:
+            logger.error(f"Polling for commit status failed: {poll_commit_result['error']}")
+            # Return the polling error details
+            return poll_commit_result 
+        
+        logger.info("Commit processing completed successfully.")
+
+        # Step 7: Update the app with the committed content version ID
+        logger.info("Step 7: Updating app with content version ID...")
+        # Correct URL: Targets the specific app object for PATCH
+        update_url = f"{GRAPH_API_ENDPOINT}/{app_id}" 
+        update_payload = {
+            "@odata.type": "#microsoft.graph.win32LobApp", # Add odata type hint for PATCH
+            "committedContentVersion": content_version_id
+        }
+        logger.info(f"Final app update URL: {update_url}")
+        logger.info(f"Final app update payload: {json.dumps(update_payload, indent=2)}")
+
         update_response = requests.patch(
             update_url,
             headers=headers,
-            json={
-                "committedContentVersion": content_version_id
-            }
+            json=update_payload
         )
         
         if update_response.status_code in (200, 201, 204):
@@ -443,7 +424,7 @@ def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_versio
         intunewin_file_path: Path to the .intunewin file
 
     Returns:
-        API response containing upload URLs or error
+        Dictionary containing 'upload_url' and 'file_id' on success, or {'error': ...} on failure.
     """
     file_size = os.path.getsize(intunewin_file_path)
     logger.info(f"Intunewin file size: {file_size} bytes")
@@ -477,18 +458,20 @@ def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_versio
             # Check initial response structure for uploadState
             upload_state = result.get("uploadState", "unknown")
             logger.info(f"Initial uploadState: {upload_state}")
+            file_id = result.get("id") # Get file_id here
 
             # Check if URL is present immediately (unlikely but possible)
             upload_url = result.get("azureStorageUri") or result.get("uploadUrl")
             if upload_url:
                 logger.info("Upload URL/Azure Storage URI available immediately.")
-                return {"files": [result]} # Return as a list to match polling structure
+                if not file_id:
+                    logger.error("URL found immediately, but file ID is missing.")
+                    return {"error": "Missing file ID on immediate success."}
+                return {"upload_url": upload_url, "file_id": file_id}
 
             # If pending, start polling
             if upload_state == "azureStorageUriRequestPending":
                 logger.info("Upload URL is pending, starting polling...")
-                # Correctly get the file ID from the top-level result dictionary
-                file_id = result.get("id")
                 if not file_id:
                     logger.error("Could not find file ID in the initial response when polling was required.")
                     return {"error": "Missing file ID for polling."}
@@ -498,29 +481,32 @@ def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_versio
                 # Check poll result for errors or the direct file dictionary
                 if poll_result and "error" not in poll_result:
                     logger.info(f"Polling successful. Final file status: {json.dumps(poll_result, indent=2)}")
-                    # Directly check the returned dictionary for the upload URI
+                    # Directly check the returned dictionary for the upload URI and file ID
                     final_upload_url = poll_result.get("azureStorageUri") or poll_result.get("uploadUrl")
+                    final_file_id = poll_result.get("id") # Should match the file_id we polled with
                     
-                    if final_upload_url:
-                        logger.info("Successfully obtained upload URL/Azure Storage URI after polling.")
-                        # Return the successful result, wrapped in the expected list structure
-                        return {"files": [poll_result]}
-                    else:
+                    if final_upload_url and final_file_id:
+                        logger.info("Successfully obtained upload URL/Azure Storage URI and file ID after polling.")
+                        return {"upload_url": final_upload_url, "file_id": final_file_id}
+                    elif not final_upload_url:
                         logger.error(f"Polling completed, but no upload URL or Azure Storage URI found in the final response (State: {poll_result.get('uploadState', 'N/A')}).")
                         return {"error": "No upload URL found after polling."}
+                    else: # URL found but ID missing (highly unlikely)
+                         logger.error(f"Polling completed and URL found, but file ID missing in final response (State: {poll_result.get('uploadState', 'N/A')}).")
+                         return {"error": "Missing file ID after polling."}
                 elif poll_result and "error" in poll_result:
                     # Handle errors returned by the polling function itself
                     logger.error(f"Polling failed: {poll_result['error']}")
-                    return {"error": f"Polling failed: {poll_result['error']}"}
+                    return poll_result
                 else:
-                    # Handle case where polling returns None or unexpected structure
                     logger.error("Polling function returned an unexpected result or None.")
                     return {"error": "Polling function returned unexpected result."}
             
             # Handle states other than pending from the initial response
             elif upload_state == "azureStorageUriRequestSuccess":
-                 logger.error("Initial state is 'success' but URL was missing. This is unexpected.")
-                 return {"error": "Initial state was success but URL was missing."}
+                 # This case means initial POST returned success state but we didn't find URL/ID earlier
+                 logger.error("Initial state is 'success' but URL or file ID was missing. This is unexpected.")
+                 return {"error": "Initial state was success but URL or file ID was missing."}
             else:
                 logger.error(f"Initial request returned unexpected upload state: {upload_state}")
                 return {"error": f"Unexpected initial upload state: {upload_state}"}
@@ -640,24 +626,36 @@ def upload_intunewin_file(upload_url: str, intunewin_file_path: str):
         logger.error(f"An unexpected error occurred during upload: {e}")
         return False
 
-def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str):
+def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str, file_encryption_info_dict: Dict[str, Any]):
     """
-    Commit the content version after file upload.
+    Commit the content version file after upload using its specific file ID.
+    
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+        content_version_id: ID of the content version
+        file_id: ID of the specific file within the content version
+        file_encryption_info_dict: Dictionary containing the fileEncryptionInfo structure
+        
+    Returns:
+        Dictionary with status or error details
     """
-    # Correct URL path including /deviceAppManagement/mobileApps/
-    url = (f"{GRAPH_API_ENDPOINT}/deviceAppManagement/mobileApps/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
-           f"{content_version_id}/commit")
+    # Construct the file-specific commit URL
+    # GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0/deviceAppManagement/mobileApps"
+    url = (f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
+           f"{content_version_id}/files/{file_id}/commit")
     
-    # For unencrypted files, fileEncryptionInfo should be null
-    body = {
-        "fileEncryptionInfo": None
-    }
-    
-    # Log request details for debugging
+    # The body should be the fileEncryptionInfo dictionary itself, wrapped and typed
+    # Re-adding @odata.type based on documentation example, as removing it didn't fix commitFileFailed
+    encryption_info_with_type = file_encryption_info_dict.copy()
+    encryption_info_with_type['@odata.type'] = 'microsoft.graph.fileEncryptionInfo'
+    body = {"fileEncryptionInfo": encryption_info_with_type}
+ 
+    # Log request details for debugging (excluding auth header)
     log_headers = {k: v for k, v in headers.items() if k.lower() != 'authorization'}
-    logger.debug(f"Commit Request URL: {url}")
+    logger.info(f"Commit Request URL: {url}")
     logger.debug(f"Commit Request Headers: {log_headers}")
-    logger.debug(f"Commit Request Body: {json.dumps(body)}")
+    logger.info(f"Commit Request Body:\n{json.dumps(body, indent=2)}") 
     
     try:
         response = requests.post(
@@ -666,17 +664,77 @@ def commit_content_version(headers: Dict[str, str], app_id: str, content_version
             json=body
         )
         
-        if response.status_code in (200, 201, 204):
-            return {"status": "success", "contentVersionId": content_version_id}
+        # Check response status
+        if response.status_code in (200, 201, 202, 204): # 202 Accepted is also possible
+            logger.info(f"Successfully initiated commit for file {file_id} (Status: {response.status_code})")
+            # Note: Successful commit POST doesn't return content immediately. Polling might be needed.
+            return {"status": "success", "message": f"Commit initiated for file {file_id}"}
         else:
-            logger.error(f"Failed to commit content version: {response.status_code} - {response.text}")
+            logger.error(f"Failed to commit file {file_id}: {response.status_code} - {response.text}")
             return {
                 "error": f"API error: {response.status_code}",
                 "details": response.text
             }
-    except Exception as e:
-        logger.error(f"Exception during content commit: {str(e)}")
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Exception during file commit: {e}")
         return {"error": str(e)}
+
+def poll_for_commit_status(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str,
+                           max_attempts: int = 60, delay_seconds: int = 10) -> Dict[str, Any]:
+    """
+    Poll for the commit status of a content version file until it's successful or max attempts reached.
+
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+        content_version_id: ID of the content version
+        file_id: ID of the file being polled
+        max_attempts: Maximum number of polling attempts
+        delay_seconds: Delay between polling attempts in seconds
+
+    Returns:
+        The final file status dictionary on success, or {'error': ...} on failure/timeout.
+    """
+    url = (f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
+           f"{content_version_id}/files/{file_id}")
+    logger.info(f"Polling commit status for file {file_id} at URL: {url}")
+
+    for attempt in range(max_attempts):
+        logger.info(f"Commit polling attempt {attempt + 1}/{max_attempts}...")
+        try:
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                file_status_result = response.json()
+                upload_state = file_status_result.get("uploadState", "unknown")
+                logger.info(f"Current commit uploadState: {upload_state}")
+
+                if upload_state == "commitFileSuccess":
+                    logger.info(f"Commit successful for file {file_id}.")
+                    return file_status_result # Return the full status on success
+                elif upload_state in ["failed", "commitFileFailed"]: # Check for terminal failure states
+                    full_response_details = json.dumps(file_status_result, indent=2)
+                    logger.error(f"Commit polling failed with terminal state '{upload_state}'. Full response: \n{full_response_details}")
+                    # Return error immediately, stop polling
+                    return {"error": f"Commit failed with state: {upload_state}", "details": file_status_result}
+                elif upload_state == "pendingCommit":
+                     logger.info(f"Commit still pending (State: {upload_state}). Waiting {delay_seconds} seconds...")
+                else: # Assume other states are also pending/transient, log and continue polling
+                     logger.info(f"Commit in transient state: {upload_state}. Waiting {delay_seconds} seconds...")
+                
+            else:
+                logger.warning(f"Commit polling attempt {attempt + 1} failed with status {response.status_code}: {response.text}")
+                # Continue polling on transient HTTP errors, maybe? Or fail faster? Let's continue for now.
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error during commit polling attempt {attempt + 1}: {e}")
+            # Continue polling after transient network errors
+
+        time.sleep(delay_seconds)
+
+    logger.error(f"Commit polling timed out after {max_attempts} attempts for file {file_id}.")
+    return {"error": "Commit polling timed out"}
 
 def create_common_detection_rules(install_path: str, executable_name: str) -> List[Dict[str, Any]]:
     """
@@ -696,6 +754,92 @@ def create_common_detection_rules(install_path: str, executable_name: str) -> Li
             file_or_folder_name=executable_name
         )
     ]
+
+def extract_file_encryption_info(intunewin_file_path: str) -> dict:
+    """Extracts file encryption information from detection.xml within the .intunewin package.
+
+    Args:
+        intunewin_file_path: Path to the .intunewin file.
+
+    Returns:
+        A dictionary containing the file encryption info with camelCase keys.
+        Returns an empty dictionary if extraction fails.
+    """
+    logger.info(f"Extracting file encryption info from {intunewin_file_path}...")
+    detection_xml_path = "IntuneWinPackage/Metadata/Detection.xml"
+    
+    try:
+        with zipfile.ZipFile(intunewin_file_path, 'r') as archive:
+            if detection_xml_path not in archive.namelist():
+                logger.error(f"{detection_xml_path} not found in the archive.")
+                return {}
+                
+            with archive.open(detection_xml_path) as xml_file:
+                xml_content = xml_file.read()
+                
+            # Parse XML
+            try:
+                root = ET.fromstring(xml_content)
+                
+                # Dynamically extract namespace
+                namespace = ''
+                if '}' in root.tag:
+                    namespace = root.tag.split('}')[0] + '}'
+                    
+                # Find the EncryptionInfo element
+                encryption_info_element = root.find(f".//{namespace}EncryptionInfo")
+                if encryption_info_element is None:
+                    logger.error("EncryptionInfo element not found in detection.xml.")
+                    return {}
+
+                # Extract required fields using the namespace
+                def get_element_text(element_name):
+                    elem = encryption_info_element.find(f".//{namespace}{element_name}")
+                    return elem.text.strip() if elem is not None and elem.text is not None else None
+
+                encryption_key = get_element_text("EncryptionKey")
+                mac_key = get_element_text("MacKey")
+                initialization_vector = get_element_text("InitializationVector")
+                mac = get_element_text("Mac")
+                profile_identifier = get_element_text("ProfileIdentifier")
+                file_digest = get_element_text("FileDigest")
+                file_digest_algorithm = get_element_text("FileDigestAlgorithm")
+
+                # Basic validation
+                required_fields = {
+                    'encryptionKey': encryption_key,
+                    'macKey': mac_key,
+                    'initializationVector': initialization_vector,
+                    'mac': mac,
+                    'profileIdentifier': profile_identifier,
+                    'fileDigest': file_digest,
+                    'fileDigestAlgorithm': file_digest_algorithm
+                }
+
+                missing_fields = [k for k, v in required_fields.items() if v is None]
+                if missing_fields:
+                    logger.error(f"Missing required encryption fields: {', '.join(missing_fields)}")
+                    return {}
+                    
+                logger.info("Successfully extracted fileEncryptionInfo.")
+                return required_fields # Return dict with camelCase keys
+
+            except ET.ParseError as e:
+                logger.error(f"Failed to parse detection.xml: {e}")
+                return {}
+            except Exception as e:
+                logger.error(f"Error processing detection.xml content: {e}")
+                return {}
+
+    except zipfile.BadZipFile:
+        logger.error(f"Invalid or corrupted .intunewin file: {intunewin_file_path}")
+        return {}
+    except FileNotFoundError:
+        logger.error(f".intunewin file not found: {intunewin_file_path}")
+        return {}
+    except Exception as e:
+        logger.error(f"Failed to open or read {intunewin_file_path}: {e}")
+        return {}
 
 # Example usage:
 """
