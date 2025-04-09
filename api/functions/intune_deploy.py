@@ -13,7 +13,10 @@ import requests
 import os
 import zipfile
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Any, Optional
+import math
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
 
 # Import our authentication module
 from .auth import get_auth_headers
@@ -295,33 +298,29 @@ def deploy_win32_app(
 
         logger.info(f"Successfully obtained upload URL and file ID: {file_id}")
         
+        # Extract encryption info *before* upload step as it's needed for decryption
+        logger.info("Extracting file encryption info...")
+        file_encryption_info_dict = extract_file_encryption_info(intunewin_file_path)
+        if not file_encryption_info_dict:
+            logger.error("Failed to extract file encryption info.")
+            return {"error": "Failed to extract file encryption info"}
+        
         # Step 4: Upload the .intunewin file
         logger.info("Step 4: Uploading .intunewin file...")
         logger.info(f"Using upload URL: {upload_url[:upload_url.find('?')+1]}... (SAS token hidden)") # Log URL without SAS token
         
-        upload_result = upload_intunewin_file(upload_url, intunewin_file_path)
+        upload_result = _decrypt_and_upload_chunks(intunewin_file_path, upload_url, file_encryption_info_dict)
         
         if not upload_result:
-            # upload_intunewin_file logs specifics, just return generic error here
+            # _decrypt_and_upload_chunks logs specifics, just return generic error here
             logger.error("Failed to upload .intunewin file.")
             return {"error": "File upload failed"} # Keep error simple as function logs details
 
         logger.info("Successfully uploaded .intunewin file")
 
         # Step 5: Commit Content Version
-        # Extract fileEncryptionInfo from the .intunewin file
-        logger.info(f"Extracting file encryption info from {intunewin_file_path}...")
-        file_encryption_info_dict = extract_file_encryption_info(intunewin_file_path)
-
-        if file_encryption_info_dict is None:
-            logger.error("Failed to extract file encryption info. Cannot proceed with commit.")
-            return {"error": "Failed to extract file encryption info from .intunewin file."}
-            
-        logger.info(f"Successfully extracted fileEncryptionInfo.") # Avoid logging potentially sensitive keys
-
-        # Step 6: Commit the content version
-        logger.info("Step 6: Committing content version...")
-        # Log the encryption info being sent
+        # The file_encryption_info_dict is already extracted above
+        
         logger.info(f"Using FileEncryptionInfo for commit: {json.dumps(file_encryption_info_dict, indent=2)}") 
         encryption_info_with_type = file_encryption_info_dict.copy()
         encryption_info_with_type['@odata.type'] = 'microsoft.graph.fileEncryptionInfo'
@@ -581,51 +580,6 @@ def poll_for_upload_url(headers: Dict[str, str], app_id: str, content_version_id
     logger.error(f"Failed to get upload URL after {max_attempts} attempts.")
     return {"error": f"Polling timed out after {max_attempts * delay_seconds} seconds"}
 
-def upload_intunewin_file(upload_url: str, intunewin_file_path: str):
-    """
-    Upload the .intunewin file to the provided Azure Storage URL.
-    
-    Args:
-        upload_url: The SAS URL provided by Intune
-        intunewin_file_path: Path to the .intunewin file
-
-    Returns:
-        True if upload is successful, False otherwise
-    """
-    logger.info(f"Uploading .intunewin file: {intunewin_file_path}")
-    try:
-        with open(intunewin_file_path, 'rb') as file_contents:
-            file_size = os.path.getsize(intunewin_file_path)
-            logger.info(f"File size: {file_size} bytes")
-            
-            # Headers required for Azure Blob Storage SAS URL upload
-            headers = {
-                'Content-Length': str(file_size),
-                'x-ms-blob-type': 'BlockBlob'
-                # 'Content-Type': 'application/octet-stream' # Often not needed for SAS PUT
-            }
-            logger.info(f"Uploading to URL: {upload_url}")
-            
-            response = requests.put(upload_url, headers=headers, data=file_contents)
-            
-            logger.info(f"Upload response status code: {response.status_code}")
-            if response.status_code in (200, 201): # OK or Created
-                logger.info("Successfully uploaded .intunewin file.")
-                return True
-            else:
-                logger.error(f"Error uploading file: {response.status_code} - {response.text}")
-                return False
-                
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Exception during file upload: {e}")
-        return False
-    except FileNotFoundError:
-        logger.error(f"Error: .intunewin file not found at {intunewin_file_path}")
-        return False
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during upload: {e}")
-        return False
-
 def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str, file_encryption_info_dict: Dict[str, Any]):
     """
     Commit the content version file after upload using its specific file ID.
@@ -840,6 +794,198 @@ def extract_file_encryption_info(intunewin_file_path: str) -> dict:
     except Exception as e:
         logger.error(f"Failed to open or read {intunewin_file_path}: {e}")
         return {}
+
+# Constants for chunked upload
+_CHUNK_SIZE = 6 * 1024 * 1024  # 6 MiB chunks
+_AZURE_BLOCK_BLOB_HEADER = {"x-ms-blob-type": "BlockBlob"}
+_AZURE_COMMIT_BLOCK_LIST_HEADERS = {"Content-Type": "application/xml"}
+# The first 48 bytes of the encrypted payload in the zip seem to be skipped in examples.
+_ENCRYPTED_PAYLOAD_SKIP_BYTES = 48 
+
+def _decrypt_and_upload_chunks(intunewin_file_path: str, azure_storage_uri: str, file_encryption_info: Dict[str, str]) -> bool:
+    """Decrypts, chunks, and uploads the application payload from the .intunewin file."""
+    logger.info("Starting decryption and chunked upload process...")
+    
+    try:
+        # 1. Extract keys and payload filename
+        encryption_key_b64 = file_encryption_info.get('encryptionKey')
+        iv_b64 = file_encryption_info.get('initializationVector')
+        if not encryption_key_b64 or not iv_b64:
+            logger.error("Missing encryption key or IV in file_encryption_info.")
+            return False
+        
+        encryption_key = base64.b64decode(encryption_key_b64)
+        iv = base64.b64decode(iv_b64)
+        
+        # Find the payload file name (often IntunePackage.intunewin but could vary)
+        # We need detection.xml again to find the *internal* FileName field
+        payload_filename = None
+        expected_unencrypted_size = None
+        detection_xml_path = "IntuneWinPackage/Metadata/Detection.xml"
+        with zipfile.ZipFile(intunewin_file_path, 'r') as archive:
+            if detection_xml_path in archive.namelist():
+                with archive.open(detection_xml_path) as xml_file:
+                    xml_content = xml_file.read()
+                    root = ET.fromstring(xml_content)
+                    namespace = ''
+                    if '}' in root.tag: namespace = root.tag.split('}')[0] + '}'
+                    
+                    # Use the FileName field from detection.xml for payload name
+                    fname_element = root.find(f".//{namespace}FileName") 
+                    if fname_element is not None and fname_element.text:
+                        payload_filename = fname_element.text.strip()
+ 
+                    # Get the expected unencrypted size
+                    size_element = root.find(f".//{namespace}UnencryptedContentSize")
+                    if size_element is not None and size_element.text:
+                        try:
+                            expected_unencrypted_size = int(size_element.text.strip())
+                        except ValueError:
+                            logger.warning(f"Could not parse UnencryptedContentSize: {size_element.text}")
+            if not payload_filename:
+                 # Fallback: Try finding the largest file as payload if FileName field missing
+                 contents_prefix = "IntuneWinPackage/Contents/"
+                 payload_entry = max((entry for entry in archive.infolist() 
+                                      if not entry.is_dir() and entry.filename.startswith(contents_prefix)), 
+                                     key=lambda x: x.file_size, default=None)
+                 if payload_entry:
+                     payload_filename = payload_entry.filename # Use the full path found
+                     logger.warning(f"Could not find FileName in detection.xml, guessing payload is: {payload_filename}")
+                 else:
+                    logger.error("Could not determine payload filename within the .intunewin file.")
+                    return False
+        
+            # Construct the full path within the archive
+            if not payload_filename.startswith("IntuneWinPackage/Contents/"):
+                payload_full_path = f"IntuneWinPackage/Contents/{payload_filename}"
+            else:
+                payload_full_path = payload_filename # Already has the path (e.g., from fallback)
+        
+            logger.info(f"Identified payload file within archive: {payload_full_path}")
+        
+            # 2. Decrypt and Upload Chunk by Chunk
+            cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            block_ids = []
+            chunk_index = 0
+            total_decrypted_bytes_uploaded = 0
+        
+            with archive.open(payload_full_path, 'r') as encrypted_stream:
+                encrypted_stream.read(_ENCRYPTED_PAYLOAD_SKIP_BYTES)
+                logger.debug(f"Skipped first {_ENCRYPTED_PAYLOAD_SKIP_BYTES} bytes of encrypted payload.")
+        
+                while True:
+                    # Read encrypted chunk (must be multiple of block size for decryptor)
+                    # Read slightly more than chunk size to ensure we have full blocks
+                    read_size = _CHUNK_SIZE + algorithms.AES.block_size 
+                    encrypted_chunk = encrypted_stream.read(read_size)
+                    if not encrypted_chunk:
+                        break # End of file
+        
+                    # Decrypt the chunk
+                    decrypted_chunk = decryptor.update(encrypted_chunk)
+                    
+                    if not decrypted_chunk:
+                        continue # Need more data for a full block
+        
+                    # Generate Block ID (Azure requires Base64 encoded string)
+                    block_id_str = str(chunk_index).zfill(4) # Pad to 4 digits
+                    block_id_b64 = base64.b64encode(block_id_str.encode('ascii')).decode('ascii')
+                    block_ids.append(block_id_b64)
+        
+                    # Construct Put Block URL
+                    put_block_url = f"{azure_storage_uri}&comp=block&blockid={block_id_b64}"
+                    logger.info(f"Uploading chunk {chunk_index + 1}... Block ID: {block_id_str} ({block_id_b64})")
+        
+                    # Upload the decrypted chunk
+                    try:
+                        upload_response = requests.put(
+                            put_block_url,
+                            headers=_AZURE_BLOCK_BLOB_HEADER,
+                            data=decrypted_chunk
+                        )
+                        upload_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                        total_decrypted_bytes_uploaded += len(decrypted_chunk) # Track size
+                        logger.debug(f"Chunk {chunk_index + 1} uploaded successfully.")
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Failed to upload chunk {chunk_index + 1}: {e}")
+                        logger.error(f"Response status: {e.response.status_code if e.response else 'N/A'}")
+                        logger.error(f"Response text: {e.response.text if e.response else 'N/A'}")
+                        return False
+        
+                    chunk_index += 1
+        
+                # Finalize decryption (handles any remaining data in the decryptor)
+                logger.debug("Finalizing decryption...")
+                final_decrypted_chunk = decryptor.finalize()
+                if final_decrypted_chunk: # Check if there's remaining data to upload
+                    block_id_str = str(chunk_index).zfill(4)
+                    block_id_b64 = base64.b64encode(block_id_str.encode('ascii')).decode('ascii')
+                    block_ids.append(block_id_b64)
+                    put_block_url = f"{azure_storage_uri}&comp=block&blockid={block_id_b64}"
+                    logger.info(f"Uploading final chunk {chunk_index + 1} (from finalize)... Block ID: {block_id_str} ({block_id_b64}), Size: {len(final_decrypted_chunk)} bytes")
+                    try:
+                        upload_response = requests.put(put_block_url, headers=_AZURE_BLOCK_BLOB_HEADER, data=final_decrypted_chunk)
+                        upload_response.raise_for_status()
+                        total_decrypted_bytes_uploaded += len(final_decrypted_chunk) # Track final size
+                        logger.debug(f"Final chunk {chunk_index + 1} uploaded successfully.")
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Failed to upload final chunk {chunk_index + 1}: {e}")
+                        logger.error(f"Response status: {e.response.status_code if e.response else 'N/A'}")
+                        logger.error(f"Response text: {e.response.text if e.response else 'N/A'}")
+                        return False
+                else:
+                    logger.debug("No final chunk data returned from finalize().")
+             
+        # 3. Commit Block List
+        if not block_ids:
+            logger.error("No blocks were generated or uploaded.")
+            return False
+
+        logger.info(f"Total decrypted bytes uploaded: {total_decrypted_bytes_uploaded}")
+        if expected_unencrypted_size is not None:
+            logger.info(f"Expected unencrypted size (from detection.xml): {expected_unencrypted_size}")
+            if total_decrypted_bytes_uploaded == expected_unencrypted_size:
+                logger.info("Uploaded size MATCHES expected size.")
+            else:
+                logger.warning("Uploaded size DOES NOT MATCH expected size!")
+        else:
+            logger.warning("Could not verify uploaded size against detection.xml (UnencryptedContentSize missing or invalid).")
+        
+        logger.info("Committing block list with {} blocks...".format(len(block_ids)))
+        block_list_xml = '<?xml version="1.0" encoding="utf-8"?><BlockList>' + \
+                         ''.join([f'<Latest>{block_id}</Latest>' for block_id in block_ids]) + \
+                         '</BlockList>'
+
+        commit_url = f"{azure_storage_uri}&comp=blocklist"
+
+        try:
+            commit_response = requests.put(
+                commit_url,
+                headers=_AZURE_COMMIT_BLOCK_LIST_HEADERS,
+                data=block_list_xml.encode('utf-8') # Azure expects UTF-8 encoded XML
+            )
+            commit_response.raise_for_status()
+            logger.info("Block list committed successfully.")
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to commit block list: {e}")
+            logger.error(f"Response status: {e.response.status_code if e.response else 'N/A'}")
+            logger.error(f"Response text: {e.response.text if e.response else 'N/A'}")
+            return False
+    
+    except zipfile.BadZipFile:
+        logger.error(f"Invalid or corrupted .intunewin file: {intunewin_file_path}")
+        return False
+    except FileNotFoundError:
+         logger.error(f".intunewin file not found: {intunewin_file_path}")
+         return False
+    except ET.ParseError as e:
+        logger.error(f"Failed to parse detection.xml within archive: {e}")
+        return False
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred during decryption/upload: {e}") # Use logger.exception for stack trace
+        return False
 
 # Example usage:
 """
