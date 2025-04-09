@@ -8,6 +8,7 @@ using the Microsoft Graph API.
 import json
 import base64
 import logging
+import time
 import requests
 import os
 from typing import Dict, List, Optional, Union, Any, Tuple
@@ -117,11 +118,10 @@ def deploy_win32_app(
     install_command_line: str,
     uninstall_command_line: str,
     intunewin_file_path: str,
-    setup_file_path: Optional[str] = None,
-    detection_rules: Optional[List[Dict[str, Any]]] = None,
-    requirement_rules: Optional[List[Dict[str, Any]]] = None,
-    icon_path: Optional[str] = None,
-    minimum_os: Optional[str] = None,
+    setup_file_path: str,
+    detection_rules: List[Dict[str, Any]],
+    requirement_rules: List[Dict[str, Any]],
+    minimum_os: str = "1607",
     architecture: str = "x64"
 ) -> Dict[str, Any]:
     """
@@ -135,15 +135,28 @@ def deploy_win32_app(
         uninstall_command_line: Command line to uninstall the application
         intunewin_file_path: Path to the .intunewin file
         setup_file_path: Path to the setup file within the .intunewin package
-        detection_rules: List of detection rules
-        requirement_rules: List of requirement rules
-        icon_path: Path to the application icon
-        minimum_os: Minimum supported Windows version
-        architecture: Architecture ("x86", "x64", "arm", "neutral")
+        detection_rules: List of detection rules (required)
+        requirement_rules: List of requirement rules (required)
+        minimum_os: Minimum supported Windows version (defaults to 1607)
+        architecture: Architecture ("x86", "x64", "arm", "neutral") (defaults to x64)
     
     Returns:
         API response from Intune
     """
+    # Log all input parameters for debugging
+    logger.info(f"Deploying app with the following parameters:")
+    logger.info(f"  display_name: {display_name}")
+    logger.info(f"  description: {description}")
+    logger.info(f"  publisher: {publisher}")
+    logger.info(f"  install_command_line: {install_command_line}")
+    logger.info(f"  uninstall_command_line: {uninstall_command_line}")
+    logger.info(f"  intunewin_file_path: {intunewin_file_path}")
+    logger.info(f"  setup_file_path: {setup_file_path}")
+    logger.info(f"  detection_rules: {len(detection_rules)} rules provided")
+    logger.info(f"  requirement_rules: {len(requirement_rules)} rules provided")
+    logger.info(f"  minimum_os: {minimum_os}")
+    logger.info(f"  architecture: {architecture}")
+    
     # Get authorization headers using our auth module
     headers = get_auth_headers()
     if not headers:
@@ -155,90 +168,44 @@ def deploy_win32_app(
         logger.error(f"Intunewin file not found: {intunewin_file_path}")
         return {"error": f"Intunewin file not found: {intunewin_file_path}"}
     
+    # Check for required arguments
+    if not detection_rules:
+        logger.error("Detection rules are required")
+        return {"error": "Detection rules are required for Win32 app deployment"}
+    
+    if not requirement_rules:
+        logger.error("Requirement rules are required")
+        return {"error": "Requirement rules are required for Win32 app deployment"}
+    
+    if not setup_file_path:
+        logger.error("Setup file path is required")
+        return {"error": "Setup file path is required for Win32 app deployment"}
+    
+    # Ensure all detection rules have the correct type
+    for rule in detection_rules:
+        if rule.get("ruleType") != Win32AppRuleType.DETECTION:
+            rule["ruleType"] = Win32AppRuleType.DETECTION
+    
+    # Ensure all requirement rules have the correct type
+    for rule in requirement_rules:
+        if rule.get("ruleType") != Win32AppRuleType.REQUIREMENT:
+            rule["ruleType"] = Win32AppRuleType.REQUIREMENT
+    
+    # Combine all rules
+    rules = detection_rules + requirement_rules
+    
     try:
-        # Step 1: Create a mobile app
-        app_result = create_mobile_app(headers, display_name, description, publisher)
-        if "error" in app_result:
-            return app_result
+        # Step 1: Create a mobile app with all required properties
+        logger.info("Step 1: Creating mobile app...")
         
-        app_id = app_result.get("id")
-        logger.info(f"Created mobile app with ID: {app_id}")
-        
-        # Step 2: Create a content version for the app
-        content_version_result = create_content_version(headers, app_id)
-        if "error" in content_version_result:
-            return content_version_result
-        
-        content_version_id = content_version_result.get("id")
-        logger.info(f"Created content version with ID: {content_version_id}")
-        
-        # Step 3: Get content upload URLs
-        upload_urls_result = get_content_upload_urls(headers, app_id, content_version_id, 
-                                                    os.path.getsize(intunewin_file_path))
-        if "error" in upload_urls_result:
-            return upload_urls_result
-        
-        # Step 4: Upload the .intunewin file
-        upload_result = upload_intunewin_file(
-            upload_urls_result.get("uploadUrl"), 
-            upload_urls_result.get("contentVersion"), 
-            intunewin_file_path
-        )
-        if "error" in upload_result:
-            return upload_result
-        
-        logger.info("Successfully uploaded .intunewin file")
-        
-        # Step 5: Commit the content version
-        commit_result = commit_content_version(
-            headers, app_id, content_version_id, 
-            file_name=os.path.basename(intunewin_file_path),
-            file_size=os.path.getsize(intunewin_file_path)
-        )
-        if "error" in commit_result:
-            return commit_result
-        
-        logger.info("Successfully committed content version")
-        
-        # Initialize rules array
-        rules = []
-        
-        # Add detection rules if provided
-        if detection_rules:
-            for rule in detection_rules:
-                if rule.get("ruleType") != Win32AppRuleType.DETECTION:
-                    rule["ruleType"] = Win32AppRuleType.DETECTION
-                rules.append(rule)
-        
-        # Add requirement rules if provided
-        if requirement_rules:
-            for rule in requirement_rules:
-                if rule.get("ruleType") != Win32AppRuleType.REQUIREMENT:
-                    rule["ruleType"] = Win32AppRuleType.REQUIREMENT
-                rules.append(rule)
-        
-        # Prepare icon if provided
-        large_icon = None
-        if icon_path:
-            try:
-                with open(icon_path, "rb") as icon_file:
-                    icon_data = icon_file.read()
-                    large_icon = {
-                        "@odata.type": "microsoft.graph.mimeContent",
-                        "type": "image/png",  # Adjust if icon is not PNG
-                        "value": base64.b64encode(icon_data).decode('utf-8')
-                    }
-            except Exception as e:
-                logger.warning(f"Failed to read icon file: {str(e)}")
-        
-        # Step 6: Update the Win32 app with details
         app_body = {
             "@odata.type": "#microsoft.graph.win32LobApp",
             "displayName": display_name,
             "description": description,
             "publisher": publisher,
+            "isFeatured": False,
             "fileName": os.path.basename(intunewin_file_path),
-            "setupFilePath": setup_file_path or os.path.basename(intunewin_file_path),
+            "setupFilePath": setup_file_path,
             "installCommandLine": install_command_line,
             "uninstallCommandLine": uninstall_command_line,
             "rules": rules,
@@ -269,86 +236,194 @@ def deploy_win32_app(
                     "type": "failed"
                 }
             ],
-            "committedContentVersion": content_version_id
+            "minimumSupportedWindowsRelease": minimum_os,
+            "applicableArchitectures": architecture
         }
         
-        # Add optional parameters if provided
-        if large_icon:
-            app_body["largeIcon"] = large_icon
-        
-        if minimum_os:
-            app_body["minimumSupportedWindowsRelease"] = minimum_os
-        
-        if architecture:
-            app_body["applicableArchitectures"] = architecture
-        
-        # Update the mobile app
-        update_url = f"{GRAPH_API_ENDPOINT}/{app_id}"
-        response = requests.patch(
-            update_url,
+        # Create the initial app with all properties
+        app_response = requests.post(
+            GRAPH_API_ENDPOINT,
             headers=headers,
             json=app_body
         )
         
-        if response.status_code in (200, 201, 204):
+        if app_response.status_code not in (200, 201):
+            logger.error(f"Failed to create app: {app_response.status_code} - {app_response.text}")
+            return {
+                "error": f"API error: {app_response.status_code}",
+                "details": app_response.text
+            }
+        
+        app_result = app_response.json()
+        app_id = app_result.get("id")
+        logger.info(f"Created mobile app with ID: {app_id}")
+        
+        # Wait for app to propagate in Intune
+        logger.info("Waiting for app to propagate in Intune (5 seconds)...")
+        import time
+        time.sleep(5)  # Allow time for app propagation in Intune
+        
+        # Step 2: Create a content version for the app
+        logger.info("Step 2: Creating content version...")
+        content_version_result = create_content_version(headers, app_id)
+        if "error" in content_version_result:
+            return content_version_result
+        
+        content_version_id = content_version_result.get("id")
+        logger.info(f"Created content version with ID: {content_version_id}")
+        
+        # Wait for content version to propagate in Intune
+        logger.info("Waiting for content version to propagate (2 seconds)...")
+        time.sleep(2)
+        
+        # Step 3: Get content upload URLs
+        logger.info("Step 3: Getting content upload URLs...")
+        file_size = os.path.getsize(intunewin_file_path)
+        logger.info(f"Intunewin file size: {file_size} bytes")
+        
+        # Check if file is too small - warn but proceed
+        if file_size < 5000:
+            logger.warning(
+                f"Warning: .intunewin file is very small ({file_size} bytes). "
+                "Typical .intunewin files are much larger. This might not be a valid package."
+            )
+        
+        upload_urls_result = get_content_upload_urls(headers, app_id, content_version_id, intunewin_file_path)
+        if upload_urls_result.get("uploadState") == "azureStorageUriRequestPending":
+            logger.info("Upload URL is not ready yet (azureStorageUriRequestPending). Polling for availability...")
+            upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id)
+            if "error" in upload_urls_result:
+                return upload_urls_result
+        if "error" in upload_urls_result:
+            return upload_urls_result
+        
+        # Step 4: Poll for the upload URL if needed
+        if "files" in upload_urls_result and upload_urls_result["files"]:
+            file_info = upload_urls_result["files"][0]
+            if "uploadState" in file_info and file_info["uploadState"] == "azureStorageUriRequestPending":
+                logger.info("Upload URL not immediately available. Starting polling process...")
+                upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id)
+                
+                if "error" in upload_urls_result:
+                    return upload_urls_result
+        
+        # Step 5: Upload the .intunewin file
+        logger.info("Step 5: Uploading .intunewin file...")
+        
+        # Log the full response structure to understand what fields are available
+        logger.info(f"Upload URLs response structure: {json.dumps(upload_urls_result, indent=2)}")
+        
+        # Try to extract the upload URL using different possible field names
+        upload_url = None
+        
+        # Check if response contains the azureStorageUri
+        if "azureStorageUri" in upload_urls_result and upload_urls_result["azureStorageUri"]:
+            upload_url = upload_urls_result.get("azureStorageUri")
+            logger.info(f"Found azureStorageUri: {upload_url}")
+        # Check alternative field names that might be used
+        elif "uploadUrl" in upload_urls_result and upload_urls_result["uploadUrl"]:
+            upload_url = upload_urls_result.get("uploadUrl")
+            logger.info(f"Found uploadUrl: {upload_url}")
+        # Check if we have a files array with URLs
+        elif "files" in upload_urls_result and upload_urls_result["files"]:
+            logger.info(f"Found files array with {len(upload_urls_result['files'])} items")
+            # Get the first file's upload URL
+            first_file = upload_urls_result["files"][0]
+            logger.info(f"First file keys: {list(first_file.keys())}")
+            if "uploadUrl" in first_file and first_file["uploadUrl"]:
+                upload_url = first_file.get("uploadUrl")
+                logger.info(f"Found uploadUrl in files array: {upload_url}")
+            elif "sasUrl" in first_file and first_file["sasUrl"]:
+                upload_url = first_file.get("sasUrl")
+                logger.info(f"Found sasUrl in files array: {upload_url}")
+            elif "azureStorageUri" in first_file and first_file["azureStorageUri"]:
+                upload_url = first_file.get("azureStorageUri")
+                logger.info(f"Found azureStorageUri in files array: {upload_url}")
+        
+        # If we still don't have a URL, check for any URL-like string in the response
+        if not upload_url:
+            # Look for any field with 'url' in the name at top level
+            for key, value in upload_urls_result.items():
+                if "url" in key.lower() and isinstance(value, str) and value.startswith("http"):
+                    upload_url = value
+                    logger.info(f"Found URL in field {key}: {upload_url}")
+                    break
+            
+            # Log the full final response JSON when the URL is missing despite success state
+            logger.error(f"No valid upload URL found in response. Full response JSON: {json.dumps(upload_urls_result, indent=2)}")
+            return {"error": "No upload URL found in the response"}
+            
+        logger.info(f"Final upload URL: {upload_url}")
+        
+        upload_result = upload_intunewin_file(
+            upload_url, 
+            upload_urls_result.get("contentVersion", content_version_id), 
+            intunewin_file_path
+        )
+        if "error" in upload_result:
+            return upload_result
+        
+        logger.info("Successfully uploaded .intunewin file")
+        
+        # Wait after upload to ensure Intune processes the file
+        logger.info("Waiting after file upload (2 seconds)...")
+        time.sleep(2)
+        
+        # Step 6: Commit the content version
+        logger.info("Step 6: Committing content version...")
+        commit_result = commit_content_version(
+            headers, app_id, content_version_id, 
+            file_name=os.path.basename(intunewin_file_path),
+            file_size=file_size
+        )
+        if "error" in commit_result:
+            return commit_result
+        
+        logger.info("Successfully committed content version")
+        
+        # Final step: Update the app with the committed content version ID
+        logger.info("Final step: Updating app with content version ID...")
+        update_url = f"{GRAPH_API_ENDPOINT}/{app_id}"
+        update_response = requests.patch(
+            update_url,
+            headers=headers,
+            json={
+                "committedContentVersion": content_version_id
+            }
+        )
+        
+        if update_response.status_code in (200, 201, 204):
             logger.info(f"Successfully deployed Win32 app: {display_name}")
             return {"id": app_id, "status": "success", "message": "App deployed successfully"}
         else:
-            logger.error(f"Failed to update app: {response.status_code} - {response.text}")
+            logger.error(f"Failed to update content version: {update_response.status_code} - {update_response.text}")
             return {
-                "error": f"API error: {response.status_code}",
-                "details": response.text
+                "error": f"API error: {update_response.status_code}",
+                "details": update_response.text
             }
     
     except Exception as e:
         logger.error(f"Exception during app deployment: {str(e)}")
         return {"error": str(e)}
 
-def create_mobile_app(headers: Dict[str, str], display_name: str, description: str, 
-                     publisher: str) -> Dict[str, Any]:
-    """
-    Create a new mobile app in Intune.
-    """
-    app_body = {
-        "@odata.type": "#microsoft.graph.win32LobApp",
-        "displayName": display_name,
-        "description": description,
-        "publisher": publisher,
-        "isFeatured": False,
-        "fileName": display_name,
-        "installExperience": {
-            "@odata.type": "microsoft.graph.win32LobAppInstallExperience",
-            "runAsAccount": "system",
-            "deviceRestartBehavior": "basedOnReturnCode"
-        }
-    }
-    
-    try:
-        response = requests.post(
-            GRAPH_API_ENDPOINT,
-            headers=headers,
-            json=app_body
-        )
-        
-        if response.status_code in (200, 201):
-            return response.json()
-        else:
-            logger.error(f"Failed to create app: {response.status_code} - {response.text}")
-            return {
-                "error": f"API error: {response.status_code}",
-                "details": response.text
-            }
-    except Exception as e:
-        logger.error(f"Exception during app creation: {str(e)}")
-        return {"error": str(e)}
-
 def create_content_version(headers: Dict[str, str], app_id: str) -> Dict[str, Any]:
     """
-    Create a content version for the app.
+    Create a content version for an app.
+    
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+    
+    Returns:
+        API response from content version creation
     """
+    # Correct endpoint for creating content versions
     url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions"
     
+    logger.info(f"Creating content version with URL: {url}")
+    
     try:
+        # Create the content version
         response = requests.post(
             url,
             headers=headers,
@@ -367,82 +442,224 @@ def create_content_version(headers: Dict[str, str], app_id: str) -> Dict[str, An
         logger.error(f"Exception during content version creation: {str(e)}")
         return {"error": str(e)}
 
-def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_version_id: str, 
-                           file_size: int, file_size_in_chunks: int = 1) -> Dict[str, Any]:
+def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_version_id: str, intunewin_file_path: str) -> Dict[str, Any]:
     """
-    Get content upload URLs for the .intunewin file.
-    """
-    url = (f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
-           f"{content_version_id}/files")
+    Get the upload URLs for the content version.
     
-    body = {
-        "fileEncryptionInfo": {
-            "encryptionKey": "",
-            "macKey": "",
-            "initializationVector": "",
-            "mac": "",
-            "profileIdentifier": "",
-            "fileDigest": "",
-            "fileDigestAlgorithm": ""
-        },
-        "name": content_version_id,
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+        content_version_id: ID of the content version
+        intunewin_file_path: Path to the .intunewin file
+
+    Returns:
+        API response containing upload URLs or error
+    """
+    file_size = os.path.getsize(intunewin_file_path)
+    logger.info(f"Intunewin file size: {file_size} bytes")
+    
+    # Warn if file size is very small
+    if file_size < 10 * 1024: # Less than 10KB
+        logger.warning(f"Warning: .intunewin file is very small ({file_size} bytes). "
+                       "Typical .intunewin files are much larger. This might not be a valid package.")
+
+    url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files"
+    payload = {
+        "@odata.type": "#microsoft.graph.mobileAppContentFile",
+        "name": os.path.basename(intunewin_file_path), # Use the actual filename
         "size": file_size,
-        "sizeEncrypted": file_size
+        "sizeEncrypted": file_size, # Typically same as size unless pre-encrypted
+        "manifest": None, # Let Intune generate this
+        "isDependency": False
     }
     
+    logger.info(f"Requesting upload URLs for content version {content_version_id}")
+    logger.info(f"Request URL: {url}")
+    
     try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=body
-        )
+        # Initial POST to potentially create the file entry and get URLs
+        response = requests.post(url, headers=headers, json=payload)
         
-        if response.status_code in (200, 201):
-            return response.json()
-        else:
-            logger.error(f"Failed to get upload URLs: {response.status_code} - {response.text}")
-            return {
-                "error": f"API error: {response.status_code}",
-                "details": response.text
-            }
-    except Exception as e:
-        logger.error(f"Exception during getting upload URLs: {str(e)}")
-        return {"error": str(e)}
-
-def upload_intunewin_file(upload_url: str, content_version: str, file_path: str) -> Dict[str, Any]:
-    """
-    Upload the .intunewin file to Azure Storage.
-    """
-    try:
-        with open(file_path, 'rb') as file:
-            file_content = file.read()
+        if response.status_code in (200, 201): # Created or OK
+            result = response.json()
+            logger.info(f"Initial upload URL request response: {json.dumps(result, indent=2)}")
             
-        # Upload the file to Azure Storage
-        headers = {
-            'x-ms-blob-type': 'BlockBlob',
-            'Content-Type': 'application/octet-stream'
-        }
-        
-        response = requests.put(
-            upload_url,
-            headers=headers,
-            data=file_content
-        )
-        
-        if response.status_code in (200, 201, 204):
-            return {"status": "success", "contentVersion": content_version}
+            # Check initial response structure for uploadState
+            upload_state = result.get("uploadState", "unknown")
+            logger.info(f"Initial uploadState: {upload_state}")
+
+            # Check if URL is present immediately (unlikely but possible)
+            upload_url = result.get("azureStorageUri") or result.get("uploadUrl")
+            if upload_url:
+                logger.info("Upload URL/Azure Storage URI available immediately.")
+                return {"files": [result]} # Return as a list to match polling structure
+
+            # If pending, start polling
+            if upload_state == "azureStorageUriRequestPending":
+                logger.info("Upload URL is pending, starting polling...")
+                poll_result = poll_for_upload_url(headers, app_id, content_version_id)
+                
+                # Check poll result for errors or files
+                if "error" in poll_result:
+                    logger.error(f"Polling failed: {poll_result['error']}")
+                    return {"error": f"Polling failed: {poll_result['error']}"}
+                
+                files = poll_result.get("files", [])
+                logger.info(f"Polling finished. Received {len(files)} file entries.")
+                
+                if files:                    
+                    first_file = files[0]
+                    logger.info(f"Final poll response JSON: {json.dumps(first_file, indent=2)}") # Log the full final file info
+                    final_upload_url = first_file.get("azureStorageUri") or first_file.get("uploadUrl")
+                    
+                    if final_upload_url:
+                        logger.info("Successfully obtained upload URL/Azure Storage URI after polling.")
+                        return {"files": files}
+                    else:
+                        logger.error(f"Polling completed, but no upload URL or Azure Storage URI found in the final response (State: {first_file.get('uploadState', 'N/A')}).")
+                        return {"error": "No upload URL found after polling, even though state might indicate success."}
+                else:
+                     logger.error("Polling finished, but no file entries were returned.")
+                     return {"error": "Polling returned no file entries."}
+            
+            # Handle states other than pending from the initial response
+            elif upload_state == "azureStorageUriRequestSuccess":
+                 logger.error("Initial state is 'success' but URL was missing. This is unexpected.")
+                 return {"error": "Initial state was success but URL was missing."}
+            else:
+                logger.error(f"Initial request returned unexpected upload state: {upload_state}")
+                return {"error": f"Unexpected initial upload state: {upload_state}"}
+
         else:
-            logger.error(f"Failed to upload file: {response.status_code} - {response.text}")
-            return {
-                "error": f"API error: {response.status_code}",
-                "details": response.text
-            }
-    except Exception as e:
-        logger.error(f"Exception during file upload: {str(e)}")
+            logger.error(f"Error requesting upload URLs: {response.status_code} - {response.text}")
+            return {"error": f"API Error {response.status_code}: {response.text}"}
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error requesting upload URLs: {e}")
         return {"error": str(e)}
 
-def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str, 
-                          file_name: str, file_size: int) -> Dict[str, Any]:
+def poll_for_upload_url(headers: Dict[str, str], app_id: str, content_version_id: str, 
+                       max_attempts: int = 30, delay_seconds: int = 6) -> Dict[str, Any]:
+    """
+    Poll for the upload URL until it's available or max attempts is reached.
+    
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+        content_version_id: ID of the content version
+        max_attempts: Maximum number of polling attempts (Increased to 30)
+        delay_seconds: Delay between polling attempts in seconds (Increased to 6)
+    
+    Returns:
+        API response containing upload URLs when ready, or error if polling times out
+    """
+    url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files"
+    
+    for attempt in range(max_attempts):
+        logger.info(f"Polling for upload URL, attempt {attempt + 1}/{max_attempts}")
+        
+        try:
+            response = requests.get(url, headers=headers)
+            logger.info(f"Poll attempt {attempt + 1} status code: {response.status_code}")
+            logger.info(f"Poll attempt {attempt + 1} headers: {json.dumps(dict(response.headers), indent=2)}")
+            
+            if response.status_code in (200, 201):
+                result = response.json()
+                
+                # Log the response structure
+                logger.info(f"Poll response structure: {json.dumps(result, indent=2)}")
+                
+                # Check if we have the upload URL now
+                if "value" in result and len(result["value"]) > 0:
+                    file_info = result["value"][0]
+                    if "uploadUrl" in file_info and file_info["uploadUrl"]:
+                        logger.info(f"Upload URL is now available after {attempt + 1} attempts")
+                        return {"files": result["value"]}
+                    elif "azureStorageUri" in file_info and file_info["azureStorageUri"]:
+                        logger.info(f"Azure Storage URI is now available after {attempt + 1} attempts")
+                        return {"files": result["value"]}
+                
+                # Check upload state to see if it's still pending
+                upload_state = "unknown"
+                if "value" in result and len(result["value"]) > 0:
+                    file_info = result["value"][0] # Re-assign for clarity
+                    upload_state = file_info.get("uploadState", "unknown")
+                    logger.info(f"Current uploadState: {upload_state}")
+                    
+                    # If state is success BUT URL is missing, keep polling
+                    if upload_state == "azureStorageUriRequestSuccess" and not file_info.get("azureStorageUri") and not file_info.get("uploadUrl"):
+                        logger.warning(f"State is '{upload_state}' but URL is still missing. Continuing poll.")
+                    elif upload_state == "uploadFailed":
+                        logger.error("Upload failed according to API state.")
+                        return {"error": "Upload failed on the server side according to uploadState"}
+                    # Exit loop if state is neither pending nor success_without_url
+                    elif upload_state != "azureStorageUriRequestPending": 
+                         logger.info(f"Upload state is '{upload_state}', assuming polling no longer needed or state is final.")
+                         # Return the current result, let the main function decide based on URL presence
+                         return {"files": result.get("value", [])} 
+
+                # If state is still pending or success_without_url, wait and retry
+                logger.info(f"Upload URL not ready (State: {upload_state}), waiting {delay_seconds} seconds before next attempt...")
+                time.sleep(delay_seconds)
+            else:
+                logger.error(f"Error polling for upload URL: {response.status_code} - {response.text}")
+                return {
+                    "error": f"API error: {response.status_code}",
+                    "details": response.text
+                }
+        except Exception as e:
+            logger.error(f"Exception during polling: {str(e)}")
+            return {"error": str(e)}
+    
+    logger.error(f"Max polling attempts ({max_attempts}) reached. Upload URL not available.")
+    return {"error": "Timeout waiting for upload URL"}
+
+def upload_intunewin_file(upload_url: str, intunewin_file_path: str):
+    """
+    Upload the .intunewin file to the provided Azure Storage URL.
+    
+    Args:
+        upload_url: The SAS URL provided by Intune
+        intunewin_file_path: Path to the .intunewin file
+
+    Returns:
+        True if upload is successful, False otherwise
+    """
+    logger.info(f"Uploading .intunewin file: {intunewin_file_path}")
+    try:
+        with open(intunewin_file_path, 'rb') as file_contents:
+            file_size = os.path.getsize(intunewin_file_path)
+            logger.info(f"File size: {file_size} bytes")
+            
+            # Headers required for Azure Blob Storage SAS URL upload
+            headers = {
+                'Content-Length': str(file_size),
+                'x-ms-blob-type': 'BlockBlob'
+                # 'Content-Type': 'application/octet-stream' # Often not needed for SAS PUT
+            }
+            logger.info(f"Uploading to URL: {upload_url}")
+            
+            response = requests.put(upload_url, headers=headers, data=file_contents)
+            
+            logger.info(f"Upload response status code: {response.status_code}")
+            if response.status_code in (200, 201): # OK or Created
+                logger.info("Successfully uploaded .intunewin file.")
+                return True
+            else:
+                logger.error(f"Error uploading file: {response.status_code} - {response.text}")
+                return False
+                
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Exception during file upload: {e}")
+        return False
+    except FileNotFoundError:
+        logger.error(f"Error: .intunewin file not found at {intunewin_file_path}")
+        return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during upload: {e}")
+        return False
+
+def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str):
     """
     Commit the content version after file upload.
     """
@@ -450,6 +667,7 @@ def commit_content_version(headers: Dict[str, str], app_id: str, content_version
            f"{content_version_id}/commit")
     
     body = {
+        "@odata.type": "#microsoft.graph.win32LobAppContent",
         "fileEncryptionInfo": {
             "encryptionKey": "",
             "macKey": "",
@@ -458,10 +676,7 @@ def commit_content_version(headers: Dict[str, str], app_id: str, content_version
             "profileIdentifier": "",
             "fileDigest": "",
             "fileDigestAlgorithm": ""
-        },
-        "fileName": file_name,
-        "size": file_size,
-        "sizeEncrypted": file_size
+        }
     }
     
     try:

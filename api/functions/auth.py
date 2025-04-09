@@ -72,6 +72,10 @@ import time
 import logging
 from typing import Dict, Optional
 import msal
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -90,7 +94,7 @@ def get_auth_config() -> Dict[str, str]:
     Returns:
         Dict containing client_id, client_secret, tenant_id, and authority
     """
-    # In production, these should come from environment variables or a secure config store
+    # Get credentials from environment variables
     config = {
         "client_id": os.environ.get("GRAPH_CLIENT_ID"),
         "client_secret": os.environ.get("GRAPH_CLIENT_SECRET"),
