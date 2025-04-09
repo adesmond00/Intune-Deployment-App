@@ -249,10 +249,7 @@ def deploy_win32_app(
         
         if app_response.status_code not in (200, 201):
             logger.error(f"Failed to create app: {app_response.status_code} - {app_response.text}")
-            return {
-                "error": f"API error: {app_response.status_code}",
-                "details": app_response.text
-            }
+            return {"error": "API error: {app_response.status_code}", "details": app_response.text}
         
         app_result = app_response.json()
         app_id = app_result.get("id")
@@ -291,7 +288,7 @@ def deploy_win32_app(
         upload_urls_result = get_content_upload_urls(headers, app_id, content_version_id, intunewin_file_path)
         if upload_urls_result.get("uploadState") == "azureStorageUriRequestPending":
             logger.info("Upload URL is not ready yet (azureStorageUriRequestPending). Polling for availability...")
-            upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id)
+            upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id, upload_urls_result.get("files")[0].get("id"))
             if "error" in upload_urls_result:
                 return upload_urls_result
         if "error" in upload_urls_result:
@@ -302,7 +299,7 @@ def deploy_win32_app(
             file_info = upload_urls_result["files"][0]
             if "uploadState" in file_info and file_info["uploadState"] == "azureStorageUriRequestPending":
                 logger.info("Upload URL not immediately available. Starting polling process...")
-                upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id)
+                upload_urls_result = poll_for_upload_url(headers, app_id, content_version_id, file_info.get("id"))
                 
                 if "error" in upload_urls_result:
                     return upload_urls_result
@@ -355,27 +352,20 @@ def deploy_win32_app(
             
         logger.info(f"Final upload URL: {upload_url}")
         
-        upload_result = upload_intunewin_file(
-            upload_url, 
-            upload_urls_result.get("contentVersion", content_version_id), 
-            intunewin_file_path
-        )
-        if "error" in upload_result:
-            return upload_result
+        upload_result = upload_intunewin_file(upload_url, intunewin_file_path)
+        if not upload_result:
+            logger.error("File upload failed.")
+            return {"error": "Failed to upload .intunewin file to Azure Storage"}
         
         logger.info("Successfully uploaded .intunewin file")
         
         # Wait after upload to ensure Intune processes the file
-        logger.info("Waiting after file upload (2 seconds)...")
-        time.sleep(2)
+        logger.info("Waiting after file upload (10 seconds)...")
+        time.sleep(10)
         
         # Step 6: Commit the content version
         logger.info("Step 6: Committing content version...")
-        commit_result = commit_content_version(
-            headers, app_id, content_version_id, 
-            file_name=os.path.basename(intunewin_file_path),
-            file_size=file_size
-        )
+        commit_result = commit_content_version(headers, app_id, content_version_id)
         if "error" in commit_result:
             return commit_result
         
@@ -383,7 +373,7 @@ def deploy_win32_app(
         
         # Final step: Update the app with the committed content version ID
         logger.info("Final step: Updating app with content version ID...")
-        update_url = f"{GRAPH_API_ENDPOINT}/{app_id}"
+        update_url = f"{GRAPH_API_ENDPOINT}/deviceAppManagement/mobileApps/{app_id}"
         update_response = requests.patch(
             update_url,
             headers=headers,
@@ -497,30 +487,35 @@ def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_versio
             # If pending, start polling
             if upload_state == "azureStorageUriRequestPending":
                 logger.info("Upload URL is pending, starting polling...")
-                poll_result = poll_for_upload_url(headers, app_id, content_version_id)
+                # Correctly get the file ID from the top-level result dictionary
+                file_id = result.get("id")
+                if not file_id:
+                    logger.error("Could not find file ID in the initial response when polling was required.")
+                    return {"error": "Missing file ID for polling."}
                 
-                # Check poll result for errors or files
-                if "error" in poll_result:
-                    logger.error(f"Polling failed: {poll_result['error']}")
-                    return {"error": f"Polling failed: {poll_result['error']}"}
+                poll_result = poll_for_upload_url(headers, app_id, content_version_id, file_id)
                 
-                files = poll_result.get("files", [])
-                logger.info(f"Polling finished. Received {len(files)} file entries.")
-                
-                if files:                    
-                    first_file = files[0]
-                    logger.info(f"Final poll response JSON: {json.dumps(first_file, indent=2)}") # Log the full final file info
-                    final_upload_url = first_file.get("azureStorageUri") or first_file.get("uploadUrl")
+                # Check poll result for errors or the direct file dictionary
+                if poll_result and "error" not in poll_result:
+                    logger.info(f"Polling successful. Final file status: {json.dumps(poll_result, indent=2)}")
+                    # Directly check the returned dictionary for the upload URI
+                    final_upload_url = poll_result.get("azureStorageUri") or poll_result.get("uploadUrl")
                     
                     if final_upload_url:
                         logger.info("Successfully obtained upload URL/Azure Storage URI after polling.")
-                        return {"files": files}
+                        # Return the successful result, wrapped in the expected list structure
+                        return {"files": [poll_result]}
                     else:
-                        logger.error(f"Polling completed, but no upload URL or Azure Storage URI found in the final response (State: {first_file.get('uploadState', 'N/A')}).")
-                        return {"error": "No upload URL found after polling, even though state might indicate success."}
+                        logger.error(f"Polling completed, but no upload URL or Azure Storage URI found in the final response (State: {poll_result.get('uploadState', 'N/A')}).")
+                        return {"error": "No upload URL found after polling."}
+                elif poll_result and "error" in poll_result:
+                    # Handle errors returned by the polling function itself
+                    logger.error(f"Polling failed: {poll_result['error']}")
+                    return {"error": f"Polling failed: {poll_result['error']}"}
                 else:
-                     logger.error("Polling finished, but no file entries were returned.")
-                     return {"error": "Polling returned no file entries."}
+                    # Handle case where polling returns None or unexpected structure
+                    logger.error("Polling function returned an unexpected result or None.")
+                    return {"error": "Polling function returned unexpected result."}
             
             # Handle states other than pending from the initial response
             elif upload_state == "azureStorageUriRequestSuccess":
@@ -538,81 +533,67 @@ def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_versio
         logger.error(f"Error requesting upload URLs: {e}")
         return {"error": str(e)}
 
-def poll_for_upload_url(headers: Dict[str, str], app_id: str, content_version_id: str, 
-                       max_attempts: int = 30, delay_seconds: int = 6) -> Dict[str, Any]:
+def poll_for_upload_url(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str,
+                       max_attempts: int = 60, delay_seconds: int = 6):
     """
     Poll for the upload URL until it's available or max attempts is reached.
-    
+
     Args:
         headers: Authorization headers
         app_id: ID of the application
         content_version_id: ID of the content version
-        max_attempts: Maximum number of polling attempts (Increased to 30)
-        delay_seconds: Delay between polling attempts in seconds (Increased to 6)
-    
+        file_id: ID of the file being polled
+        max_attempts: Maximum number of polling attempts
+        delay_seconds: Delay between polling attempts in seconds
+
     Returns:
         API response containing upload URLs when ready, or error if polling times out
     """
-    url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files"
-    
-    for attempt in range(max_attempts):
-        logger.info(f"Polling for upload URL, attempt {attempt + 1}/{max_attempts}")
-        
-        try:
-            response = requests.get(url, headers=headers)
-            logger.info(f"Poll attempt {attempt + 1} status code: {response.status_code}")
-            logger.info(f"Poll attempt {attempt + 1} headers: {json.dumps(dict(response.headers), indent=2)}")
-            
-            if response.status_code in (200, 201):
-                result = response.json()
-                
-                # Log the response structure
-                logger.info(f"Poll response structure: {json.dumps(result, indent=2)}")
-                
-                # Check if we have the upload URL now
-                if "value" in result and len(result["value"]) > 0:
-                    file_info = result["value"][0]
-                    if "uploadUrl" in file_info and file_info["uploadUrl"]:
-                        logger.info(f"Upload URL is now available after {attempt + 1} attempts")
-                        return {"files": result["value"]}
-                    elif "azureStorageUri" in file_info and file_info["azureStorageUri"]:
-                        logger.info(f"Azure Storage URI is now available after {attempt + 1} attempts")
-                        return {"files": result["value"]}
-                
-                # Check upload state to see if it's still pending
-                upload_state = "unknown"
-                if "value" in result and len(result["value"]) > 0:
-                    file_info = result["value"][0] # Re-assign for clarity
-                    upload_state = file_info.get("uploadState", "unknown")
-                    logger.info(f"Current uploadState: {upload_state}")
-                    
-                    # If state is success BUT URL is missing, keep polling
-                    if upload_state == "azureStorageUriRequestSuccess" and not file_info.get("azureStorageUri") and not file_info.get("uploadUrl"):
-                        logger.warning(f"State is '{upload_state}' but URL is still missing. Continuing poll.")
-                    elif upload_state == "uploadFailed":
-                        logger.error("Upload failed according to API state.")
-                        return {"error": "Upload failed on the server side according to uploadState"}
-                    # Exit loop if state is neither pending nor success_without_url
-                    elif upload_state != "azureStorageUriRequestPending": 
-                         logger.info(f"Upload state is '{upload_state}', assuming polling no longer needed or state is final.")
-                         # Return the current result, let the main function decide based on URL presence
-                         return {"files": result.get("value", [])} 
+    file_status_url = f"{GRAPH_API_BASE}/deviceAppManagement/mobileApps/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}"
+    logger.info(f"Polling file status URL: {file_status_url}")
 
-                # If state is still pending or success_without_url, wait and retry
-                logger.info(f"Upload URL not ready (State: {upload_state}), waiting {delay_seconds} seconds before next attempt...")
-                time.sleep(delay_seconds)
-            else:
-                logger.error(f"Error polling for upload URL: {response.status_code} - {response.text}")
-                return {
-                    "error": f"API error: {response.status_code}",
-                    "details": response.text
-                }
-        except Exception as e:
-            logger.error(f"Exception during polling: {str(e)}")
-            return {"error": str(e)}
-    
-    logger.error(f"Max polling attempts ({max_attempts}) reached. Upload URL not available.")
-    return {"error": "Timeout waiting for upload URL"}
+    for attempt in range(max_attempts):
+        logger.info(f"Polling attempt {attempt + 1}/{max_attempts} for upload URL...")
+        try:
+            file_status_response = requests.get(file_status_url, headers=headers)
+            file_status_response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error polling for upload URL: {e}")
+            # Allow retries for transient network issues
+            time.sleep(delay_seconds)
+            continue
+
+        file_status_result = file_status_response.json()
+        upload_state = file_status_result.get("uploadState")
+        sas_uri = file_status_result.get("azureStorageUri")
+
+        logger.debug(f"Polling attempt {attempt + 1}: State='{upload_state}', SAS URI Present={bool(sas_uri)}")
+
+        # Primary check: Is the SAS URI available?
+        if sas_uri:
+            logger.info(f"Upload URL received (State: '{upload_state}'). Proceeding with upload.")
+            # Even if URI is present, check if state indicates a potential issue needing attention
+            if upload_state and upload_state.lower() == "commitfilepending":
+                 logger.warning(f"SAS URI received, but state is '{upload_state}'. This might indicate a previous step was missed or is slow.")
+            elif upload_state and upload_state.lower() == "error":
+                 logger.error(f"SAS URI received, but state is '{upload_state}'. Error details: {file_status_result.get('errorMessage')}")
+                 # Decide if you should return error or proceed despite the state
+                 # return {"error": f"Polling failed with state: {upload_state}", "details": file_status_result.get('errorMessage')}
+            return file_status_result  # Success
+        elif upload_state and upload_state.lower() == "azureStorageUriRequestPending":
+            logger.info(f"Attempt {attempt + 1}/{max_attempts}: Upload URL not ready yet (State: '{upload_state}'). Retrying in {delay_seconds} seconds...")
+        elif upload_state and upload_state.lower() == "azureStorageUriRequestFailed":
+            full_response_details = json.dumps(file_status_result, indent=2)
+            logger.error(f"Polling attempt {attempt + 1}: Received 'azureStorageUriRequestFailed'. Aborting polling. Full response: \n{full_response_details}")
+            return {"error": "azureStorageUriRequestFailed", "details": file_status_result}
+        else: # Handle other unexpected states
+            full_response_details = json.dumps(file_status_result, indent=2)
+            logger.error(f"Polling attempt {attempt + 1}: Unexpected state '{upload_state}'. Full response: \n{full_response_details}\nRetrying...")
+
+        time.sleep(delay_seconds)
+
+    logger.error(f"Failed to get upload URL after {max_attempts} attempts.")
+    return {"error": f"Polling timed out after {max_attempts * delay_seconds} seconds"}
 
 def upload_intunewin_file(upload_url: str, intunewin_file_path: str):
     """
@@ -663,21 +644,20 @@ def commit_content_version(headers: Dict[str, str], app_id: str, content_version
     """
     Commit the content version after file upload.
     """
-    url = (f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
+    # Correct URL path including /deviceAppManagement/mobileApps/
+    url = (f"{GRAPH_API_ENDPOINT}/deviceAppManagement/mobileApps/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
            f"{content_version_id}/commit")
     
+    # For unencrypted files, fileEncryptionInfo should be null
     body = {
-        "@odata.type": "#microsoft.graph.win32LobAppContent",
-        "fileEncryptionInfo": {
-            "encryptionKey": "",
-            "macKey": "",
-            "initializationVector": "",
-            "mac": "",
-            "profileIdentifier": "",
-            "fileDigest": "",
-            "fileDigestAlgorithm": ""
-        }
+        "fileEncryptionInfo": None
     }
+    
+    # Log request details for debugging
+    log_headers = {k: v for k, v in headers.items() if k.lower() != 'authorization'}
+    logger.debug(f"Commit Request URL: {url}")
+    logger.debug(f"Commit Request Headers: {log_headers}")
+    logger.debug(f"Commit Request Body: {json.dumps(body)}")
     
     try:
         response = requests.post(

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from api.functions.intune_deploy import deploy_win32_app
+from api.functions.auth import get_access_token
 
 def test_real_deployment():
     """
@@ -126,4 +127,13 @@ def test_real_deployment():
         logger.info(f"Message: {result.get('message')}")
 
 if __name__ == "__main__":
+    # Explicitly check token acquisition first
+    logger.info("--- Attempting initial authentication check ---")
+    initial_token = get_access_token()
+    if initial_token:
+        logger.info("--- Initial authentication check SUCCESSFUL ---")
+    else:
+        logger.error("--- Initial authentication check FAILED. Check logs for errors from auth.py. Deployment may fail. ---")
+    
+    logger.info("--- Starting deployment test execution ---")
     test_real_deployment()
