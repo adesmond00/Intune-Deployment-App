@@ -138,14 +138,24 @@ def test_real_deployment():
     )
     
     # Check the result
-    if "error" in result:
-        logger.error(f"Deployment failed: {result.get('error')}")
-        if "details" in result:
-            logger.error(f"Details: {result.get('details')}")
+    if isinstance(result, str) and result: # Success case: returns app_id string
+        logger.info(f"Deployment successful! App ID: {result}")
+    elif isinstance(result, tuple) and len(result) == 2 and result[0] is False:
+        # Failure case: returns (False, details_dict)
+        _, details = result
+        logger.error("Deployment failed.")
+        if details and isinstance(details, dict):
+            logger.error(f"Details: {details}")
+        else:
+            logger.error("Deployment failed with incomplete details returned.")
+    elif result is False:
+        # Failure case: returns simple False (e.g., pre-polling error)
+        logger.error("Deployment failed (returned False).")
     else:
-        logger.info(f"Deployment successful!")
-        logger.info(f"App ID: {result.get('id')}")
-        logger.info(f"Message: {result.get('message')}")
+        # Unexpected return type
+        logger.error(f"Deployment failed with unexpected return value: {result}")
+ 
+    logger.info("--- Deployment test finished ---")
 
 if __name__ == "__main__":
     # Explicitly check token acquisition first
