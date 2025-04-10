@@ -17,11 +17,9 @@ from typing import Dict, List, Any, Optional
 import math
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.padding import PKCS7
+from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.backends import default_backend
 import hashlib
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives import hmac as crypto_hmac
 import hmac as std_hmac # Import standard library hmac for compare_digest
 
 # Import our authentication module
@@ -760,9 +758,9 @@ def _decrypt_and_upload_chunks(
             # --- Setup Crypto Objects --- 
             cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
             decryptor = cipher.decryptor()
-            decrypted_digest_hasher = hashes.Hash(hashes.SHA256(), backend=default_backend())
-            # HMAC for the *entire* ENCRYPTED content - finalized after loop
-            encrypted_mac_calculator = crypto_hmac.HMAC(mac_key, hashes.SHA256(), backend=default_backend())
+            unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder() # Explicit unpadder
+            encrypted_mac_calculator = hmac.HMAC(mac_key, hashes.SHA256(), backend=default_backend())
+            decrypted_digest_hasher = hashlib.sha256()
             logger.debug(f"HMAC Key (first 16 bytes): {mac_key[:16].hex()}")
 
             # --- Decrypt, Verify Digest, Calculate MAC, Upload ENCRYPTED --- 
@@ -822,8 +820,9 @@ def _decrypt_and_upload_chunks(
 
                     if not upload_successful:
                          logger.error(f"Failed to upload encrypted chunk {chunk_index} after {UPLOAD_RETRY_LIMIT} attempts. Aborting.")
-                         try: decryptor.finalize() # Cleanup
-                         except: pass
+                         # No explicit cleanup needed for decryptor/unpadder here, garbage collection handles it.
+                         # try: decryptor.finalize() # Cleanup
+                         # except: pass
                          return False, None, None
 
                     block_ids.append(block_id_b64)
@@ -834,27 +833,30 @@ def _decrypt_and_upload_chunks(
                         logger.debug(f"Processing final encrypted chunk ({len(encrypted_chunk)} bytes) for decryption.")
                         try:
                             last_decrypted_part = decryptor.update(encrypted_chunk)
-                            final_decrypted_part = decryptor.finalize() # Handles padding removal
+                            final_decrypted_part_from_decryptor = decryptor.finalize() # Handles padding removal
 
                             if last_decrypted_part:
-                                decrypted_digest_hasher.update(last_decrypted_part)
-                                total_decrypted_bytes += len(last_decrypted_part)
-                            if final_decrypted_part:
-                                decrypted_digest_hasher.update(final_decrypted_part)
-                                total_decrypted_bytes += len(final_decrypted_part)
+                                unpadded_from_last_part = unpadder.update(last_decrypted_part)
+                                decrypted_digest_hasher.update(unpadded_from_last_part)
+                                total_decrypted_bytes += len(unpadded_from_last_part)
+                            if final_decrypted_part_from_decryptor:
+                                unpadded_from_final_decryptor = unpadder.update(final_decrypted_part_from_decryptor)
+                                decrypted_digest_hasher.update(unpadded_from_final_decryptor)
+                                total_decrypted_bytes += len(unpadded_from_final_decryptor)
 
-                            logger.debug(f"Final chunk decryption: update() len={len(last_decrypted_part)}, finalize() len={len(final_decrypted_part)}")
+                            logger.debug(f"Final chunk decryption: update() len={len(last_decrypted_part)}, finalize() len={len(final_decrypted_part_from_decryptor)}")
 
                         except Exception as e:
-                             logger.error(f"Error during final decryption/finalization: {e}", exc_info=True)
+                             logger.error(f"Error during final decryption/unpadding: {e}", exc_info=True)
                         last_chunk_processed = True # Signal to exit loop
                     else:
                         # Process intermediate chunks
                         try:
                             decrypted_chunk_part = decryptor.update(encrypted_chunk)
                             if decrypted_chunk_part:
-                               decrypted_digest_hasher.update(decrypted_chunk_part)
-                               total_decrypted_bytes += len(decrypted_chunk_part)
+                               unpadded_chunk_part = unpadder.update(decrypted_chunk_part)
+                               decrypted_digest_hasher.update(unpadded_chunk_part)
+                               total_decrypted_bytes += len(unpadded_chunk_part)
                         except ValueError as e:
                             logger.error(f"Error decrypting intermediate chunk {chunk_index} for digest: {e}", exc_info=True)
                             pass # Allow continuing
@@ -870,20 +872,27 @@ def _decrypt_and_upload_chunks(
             else:
                  logger.info("Total bytes read matches ZipInfo.file_size (minus skip bytes).")
 
-            # Decryption finalization is now handled IN the loop for the last chunk
-            # Do NOT call decryptor.finalize() again here.
+            # Finalize the unpadder to remove padding
+            try:
+                final_unpadded_data = unpadder.finalize()
+                decrypted_digest_hasher.update(final_unpadded_data)
+                total_decrypted_bytes += len(final_unpadded_data)
+                logger.debug(f"Final chunk unpadding: unpadder.finalize() len={len(final_unpadded_data)}")
+            except Exception as e:
+                logger.error(f"Error during final unpadding: {e}", exc_info=True)
+                # Allow proceeding, digest/size check will fail
 
-            # Finalize MAC calculation (for the *entire* encrypted stream processed)
-            calculated_mac = encrypted_mac_calculator.finalize()
-            calculated_mac_b64 = base64.b64encode(calculated_mac).decode('utf-8')
+            # Finalize MAC calculation (ONCE)
+            calculated_mac_bytes = encrypted_mac_calculator.finalize()
+            calculated_mac_b64 = base64.b64encode(calculated_mac_bytes).decode('utf-8')
 
             # --- Verification --- 
-            calculated_digest = decrypted_digest_hasher.finalize() 
+            calculated_digest = decrypted_digest_hasher.digest() 
             calculated_digest_b64 = base64.b64encode(calculated_digest).decode('utf-8')
             digest_match = (calculated_digest == digest_from_xml)
             size_match = (total_decrypted_bytes == expected_unencrypted_size)
             # Use std_hmac.compare_digest for constant-time comparison
-            mac_match = std_hmac.compare_digest(calculated_mac, mac_from_xml)
+            mac_match = std_hmac.compare_digest(calculated_mac_bytes, mac_from_xml)
 
             logger.info(f"Expected Digest (Base64): {digest_from_xml_b64}")
             logger.info(f"Calculated Digest (Base64): {calculated_digest_b64}") # Use the b64 version
