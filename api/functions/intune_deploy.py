@@ -350,11 +350,11 @@ def deploy_win32_app(
 
         logger.info("File chunks uploaded successfully.")
 
-        # Step 5: Commit the content version file
-        logger.info("Step 5: Committing the content version file...")
+        # Step 5: Commit the content version file (with retries on 404)
+        logger.info("Step 5: Committing the content version file (with retries on 404)...")
         commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
-
-        # --- CHANGE HERE: Ensure commit uses values directly from file_encryption_info ---
+        
+        # --- CHANGE HERE: Map PascalCase from XML/upload function to camelCase for API --- 
         commit_payload = {
             "fileEncryptionInfo": {
                 "encryptionKey": file_encryption_info['EncryptionKey'],
@@ -366,24 +366,45 @@ def deploy_win32_app(
                 "fileDigestAlgorithm": file_encryption_info['FileDigestAlgorithm']
             }
         }
-        # --- End Change ---
-        logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
+        # --- End Change --- 
 
-        commit_response = requests.post(
-            commit_url,
-            headers=headers,
-            json=commit_payload
-        )
-        
-        if commit_response.status_code in (200, 201, 202):
-            logger.info(f"Successfully committed content version file: {content_version_id}")
-        else:
-            logger.error(f"Failed to commit content version file: {commit_response.status_code} - {commit_response.text}")
+        max_retries = 3
+        retry_delay = 30 # seconds
+        commit_success = False
+        for attempt in range(max_retries):
+            logger.info(f"Commit attempt {attempt + 1}/{max_retries}...")
+            logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
+            try:
+                commit_response = requests.post(commit_url, headers=headers, json=commit_payload, timeout=60)
+                
+                if commit_response.status_code == 204 or commit_response.status_code == 200:
+                    commit_success = True
+                    logger.info(f"Successfully committed content version file: {content_version_id}")
+                    break # Exit retry loop on success
+                elif commit_response.status_code == 404:
+                    logger.warning(f"Commit attempt {attempt + 1} failed with 404 (ResourceNotFound). Retrying...")
+                else:
+                    # Unexpected error, log and break
+                    logger.error(f"Commit attempt {attempt + 1} failed with unexpected status {commit_response.status_code}: {commit_response.text}")
+                    break # Exit loop on non-404 error
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Commit attempt {attempt + 1} failed with network error: {e}")
+                # Consider if retry is appropriate for network errors, for now we break
+                break
+            
+            if attempt < max_retries - 1: # Don't sleep after the last attempt
+                 time.sleep(retry_delay)
+                 
+        if not commit_success:
+            logger.error(f"Failed to commit content version file after {max_retries} attempts.")
+            # Use the last response if available, otherwise provide a generic error
+            error_details = commit_response.text if 'commit_response' in locals() and commit_response else "Retries exhausted"
+            status_code = commit_response.status_code if 'commit_response' in locals() and commit_response else "N/A"
             return {
-                "error": f"API error: {commit_response.status_code}",
-                "details": commit_response.text
+                "error": f"API error during commit: {status_code}",
+                "details": error_details
             }
-        
+
         # --- ADDED STEP 6 --- 
         # Step 6: Update the application with remaining details (Install/Uninstall commands, rules)
         logger.info("Step 6: Updating application details...")
