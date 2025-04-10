@@ -405,6 +405,17 @@ def deploy_win32_app(
                 "details": error_details
             }
 
+        # --- ADDED Polling for Published State --- 
+        logger.info("Polling for application publishing state before final update...")
+        published_wait_success = _poll_for_app_published_state(headers, app_id)
+        if not published_wait_success:
+            logger.error(f"Application {app_id} did not reach 'Published' state within the timeout. Aborting final update.")
+            # Return partial success info as commit worked, but update couldn't proceed
+            # Consider returning the app details retrieved during polling if available
+            return {"id": app_id, "display_name": display_name, "@odata.type": "#microsoft.graph.win32LobApp", "status": "commit_success_publish_timeout"}
+        logger.info("Application is in 'Published' state. Proceeding with final update.")
+        # --- End Polling --- 
+
         # --- ADDED STEP 6 --- 
         # Step 6: Update the application with remaining details (Install/Uninstall commands, rules)
         logger.info("Step 6: Updating application details...")
@@ -1067,3 +1078,51 @@ def _commit_block_list(upload_url, block_ids):
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to commit Azure block list: {e.response.status_code if e.response else 'N/A'} - {e.response.text if e.response else e}")
         return False
+
+# --- ADDED HELPER FUNCTION for Polling App State ---
+def _poll_for_app_published_state(headers: Dict[str, str], app_id: str, timeout_minutes: int = 5, delay_seconds: int = 15) -> bool:
+    """Polls the application status until its publishingState is 'Published' or 'Failed'."""
+    start_time = time.time()
+    timeout_seconds = timeout_minutes * 60
+    
+    logger.info(f"Starting polling for app {app_id} state (timeout: {timeout_minutes} mins, delay: {delay_seconds}s)...")
+    
+    while time.time() - start_time < timeout_seconds:
+        app_details = _get_app_details(headers, app_id)
+        
+        if "error" in app_details:
+            # Handle case where app details can't be fetched (e.g., transient 404)
+            if "404" in app_details.get("error", ""):
+                 logger.warning(f"Polling state: Temporarily unable to fetch app details for {app_id} (404). Retrying after delay...")
+            else:
+                 logger.warning(f"Polling state: Failed to get app details for {app_id}. Error: {app_details.get('details')}. Retrying after delay...")
+        else:
+            current_state = app_details.get("publishingState")
+            logger.info(f"Polling state: Current publishingState for app {app_id} is '{current_state}'.")
+            
+            if current_state == "published":
+                logger.info(f"Application {app_id} is now in 'Published' state.")
+                return True
+            elif current_state == "processing":
+                 logger.info(f"App content for {app_id} is still processing...")
+            elif current_state == "failed":
+                 logger.error(f"Application {app_id} entered 'Failed' state during publishing.")
+                 return False # Explicit failure state
+            # Add checks for other potential terminal failure states if needed (e.g., unknown)
+            elif current_state is None:
+                 logger.warning(f"Polling state: 'publishingState' not found in app details for {app_id}. Retrying...")
+            else: # Includes 'notPublished', 'pending', etc.
+                 logger.info(f"App {app_id} state is '{current_state}', waiting...")
+            
+        # Wait before the next poll
+        time_elapsed = time.time() - start_time
+        remaining_time = timeout_seconds - time_elapsed
+        if remaining_time <= 0:
+            break # Exit loop if timeout reached
+        
+        actual_delay = min(delay_seconds, remaining_time)
+        logger.debug(f"Waiting {actual_delay:.1f} seconds before next poll...")
+        time.sleep(actual_delay)
+        
+    logger.error(f"Timeout: Application {app_id} did not reach 'Published' or 'Failed' state within {timeout_minutes} minutes.")
+    return False
