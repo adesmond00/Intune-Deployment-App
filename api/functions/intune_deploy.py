@@ -350,14 +350,6 @@ def deploy_win32_app(
 
         logger.info("File chunks uploaded successfully.")
 
-        # Update the encryption info with the *calculated* MAC before returning
-        if calculated_mac_b64: # Use the correct variable
-            logger.info(f"Updating MAC in returned encryption info with calculated value: {calculated_mac_b64}") # Use the correct variable
-            file_encryption_info['Mac'] = calculated_mac_b64 # Use the correct variable
-        else:
-            # This case should ideally not happen if decryption/verification succeeded, but log if it does
-            logger.warning("Calculated MAC was None, cannot update in returned encryption info.")
-
         # Step 5: Commit the content version file
         logger.info("Step 5: Committing the content version file...")
         commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
@@ -391,9 +383,101 @@ def deploy_win32_app(
                 "error": f"API error: {commit_response.status_code}",
                 "details": commit_response.text
             }
-    
+        
+        # --- ADDED STEP 6 --- 
+        # Step 6: Update the application with remaining details (Install/Uninstall commands, rules)
+        logger.info("Step 6: Updating application details...")
+        update_url = f"{GRAPH_API_ENDPOINT}/{app_id}"
+        update_payload = {
+            "@odata.type": "#microsoft.graph.win32LobApp",
+            "description": description,
+            "publisher": publisher,
+            "informationUrl": None,
+            "privacyInformationUrl": None,
+            "developer": publisher, # Often same as publisher
+            "owner": publisher, # Often same as publisher
+            "notes": "",
+            "installCommandLine": install_command_line,
+            "uninstallCommandLine": uninstall_command_line,
+            "applicableArchitectures": architecture,
+            "minimumSupportedOperatingSystem": {
+                "@odata.type": "microsoft.graph.windowsMinimumOperatingSystem",
+                "v10_1607": minimum_os == "1607" or True, # Default to 1607+
+                # Add other versions if needed based on minimum_os input, e.g.
+                # "v10_1703": minimum_os == "1703",
+                # "v10_1709": minimum_os == "1709",
+                # ... and so on
+            },
+            "detectionRules": detection_rules,
+            "requirementRules": requirement_rules,
+            "installExperience": {
+                "@odata.type": "microsoft.graph.win32LobAppInstallExperience",
+                "runAsAccount": "system", # Or "user"
+                "deviceRestartBehavior": "allow" # "suppress", "force", "allow"
+            },
+            "returnCodes": [ # Common default return codes
+                {
+                    "returnCode": 0,
+                    "type": "success"
+                },
+                {
+                    "returnCode": 1707,
+                    "type": "success" # Success, reboot initiated by app
+                },
+                {
+                    "returnCode": 3010,
+                    "type": "softReboot" # Success, soft reboot required
+                },
+                {
+                    "returnCode": 1641,
+                    "type": "hardReboot" # Success, hard reboot required
+                },
+                 {
+                    "returnCode": 1618,
+                    "type": "retry" # Another installation is in progress
+                }
+            ],
+            "msiInformation": None # Only for MSI apps
+        }
+
+        logger.debug(f"Update Payload: {json.dumps(update_payload, indent=2)}")
+        update_response = requests.patch(update_url, headers=headers, json=update_payload)
+
+        if update_response.status_code in (200, 204): # OK or No Content
+            logger.info(f"Successfully updated application details for app ID: {app_id}")
+            # Attempt to get the final app details after update
+            final_app_details = _get_app_details(headers, app_id)
+            if "error" in final_app_details:
+                 logger.warning(f"Successfully updated app, but failed to retrieve final details: {final_app_details.get('details', 'Unknown error')}")
+                 # Return something indicative of success even if final fetch failed
+                 return {"id": app_id, "display_name": display_name, "@odata.type": "#microsoft.graph.win32LobApp", "update_status": "success_fetch_failed"}
+            else:
+                 return final_app_details # Return the full updated app info
+        else:
+            logger.error(f"Failed to update application details: {update_response.status_code} - {update_response.text}")
+            return {
+                "error": f"API error during app update: {update_response.status_code}",
+                "details": update_response.text
+            }
+
     except Exception as e:
         logger.error(f"Exception during app deployment: {str(e)}")
+        return {"error": str(e)}
+
+# --- ADDED HELPER FUNCTION ---
+def _get_app_details(headers: Dict[str, str], app_id: str) -> Dict[str, Any]:
+    """Helper function to get details of a specific app."""
+    url = f"{GRAPH_API_ENDPOINT}/{app_id}"
+    logger.info(f"Getting final app details from: {url}")
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"Failed to get app details: {response.status_code} - {response.text}")
+            return {"error": f"API error fetching app details: {response.status_code}", "details": response.text}
+    except Exception as e:
+        logger.error(f"Exception getting app details: {str(e)}")
         return {"error": str(e)}
 
 def create_content_version(headers: Dict[str, str], app_id: str) -> Dict[str, Any]:
@@ -917,17 +1001,18 @@ def _decrypt_and_upload_chunks(
 
             # --- Commit Block List in Azure --- 
             if not _commit_block_list(upload_url, block_ids):
-                 return False, calculated_digest_b64, calculated_mac_b64 # Commit failed
+                 return False, calculated_digest_b64, mac_from_xml_b64 # Commit failed
 
             # Only return success if digest matched
             if digest_match:
                  logger.info("Waiting 60 seconds for Azure storage changes to propagate before Intune commit...")
                  time.sleep(60)
-                 return True, calculated_digest_b64, calculated_mac_b64
+                 return True, calculated_digest_b64, mac_from_xml_b64
             else:
-                 # Even though block list was committed, return failure due to digest mismatch
-                 return False, calculated_digest_b64, calculated_mac_b64
-
+                  # Even though block list was committed, return failure due to digest mismatch
+                  logger.error(f"Digest or size mismatch prevented successful return. Digest Match: {digest_match}, Size Match: {size_match}")
+                  return False, calculated_digest_b64, mac_from_xml_b64
+ 
     except FileNotFoundError:
         logger.error(f".intunewin file not found: {intunewin_file_path}")
     except zipfile.BadZipFile:
@@ -937,8 +1022,9 @@ def _decrypt_and_upload_chunks(
     except Exception as e:
         logger.error(f"An unexpected error occurred during decryption/upload: {e}", exc_info=True)
 
-    return False, None, None # Default failure case
-
+    # Default failure case if any exception occurred or initial checks failed
+    return False, None, None 
+ 
 def _commit_block_list(upload_url, block_ids):
     """Commits the block list to Azure Blob Storage."""
     if not block_ids:
@@ -960,269 +1046,3 @@ def _commit_block_list(upload_url, block_ids):
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to commit Azure block list: {e.response.status_code if e.response else 'N/A'} - {e.response.text if e.response else e}")
         return False
-
-def deploy_win32_app(
-    display_name: str,
-    description: str,
-    publisher: str,
-    install_command_line: str,
-    uninstall_command_line: str,
-    intunewin_file_path: str,
-    setup_file_path: str,
-    detection_rules: List[Dict[str, Any]],
-    requirement_rules: List[Dict[str, Any]],
-    minimum_os: str = "1607",
-    architecture: str = "x64"
-) -> Dict[str, Any]:
-    """
-    Deploy a Win32 application to Intune using Microsoft Graph API.
-    
-    Args:
-        display_name: Display name of the application
-        description: Description of the application
-        publisher: Publisher of the application
-        install_command_line: Command line to install the application
-        uninstall_command_line: Command line to uninstall the application
-        intunewin_file_path: Path to the .intunewin file
-        setup_file_path: Path to the setup file within the .intunewin package
-        detection_rules: List of detection rules (required)
-        requirement_rules: List of requirement rules (required)
-        minimum_os: Minimum supported Windows version (defaults to 1607)
-        architecture: Architecture ("x86", "x64", "arm", "neutral") (defaults to x64)
-    
-    Returns:
-        API response from Intune
-    """
-    # Log all input parameters for debugging
-    logger.info(f"Deploying app with the following parameters:")
-    logger.info(f"  display_name: {display_name}")
-    logger.info(f"  description: {description}")
-    logger.info(f"  publisher: {publisher}")
-    logger.info(f"  install_command_line: {install_command_line}")
-    logger.info(f"  uninstall_command_line: {uninstall_command_line}")
-    logger.info(f"  intunewin_file_path: {intunewin_file_path}")
-    logger.info(f"  setup_file_path: {setup_file_path}")
-    logger.info(f"  detection_rules: {len(detection_rules)} rules provided")
-    logger.info(f"  requirement_rules: {len(requirement_rules)} rules provided")
-    logger.info(f"  minimum_os: {minimum_os}")
-    logger.info(f"  architecture: {architecture}")
-    
-    # Get authorization headers using our auth module
-    headers = get_auth_headers()
-    if not headers:
-        logger.error("Failed to get authorization headers")
-        return {"error": "Authentication failed"}
-    
-    # Check if .intunewin file exists
-    if not os.path.exists(intunewin_file_path):
-        logger.error(f"Intunewin file not found: {intunewin_file_path}")
-        return {"error": f"Intunewin file not found: {intunewin_file_path}"}
-    
-    # Check for required arguments
-    if not detection_rules:
-        logger.error("Detection rules are required")
-        return {"error": "Detection rules are required for Win32 app deployment"}
-    
-    if not requirement_rules:
-        logger.error("Requirement rules are required")
-        return {"error": "Requirement rules are required for Win32 app deployment"}
-    
-    if not setup_file_path:
-        logger.error("Setup file path is required")
-        return {"error": "Setup file path is required for Win32 app deployment"}
-    
-    # Ensure all detection rules have the correct type
-    for rule in detection_rules:
-        if rule.get("ruleType") != Win32AppRuleType.DETECTION:
-            rule["ruleType"] = Win32AppRuleType.DETECTION
-    
-    # Ensure all requirement rules have the correct type
-    for rule in requirement_rules:
-        if rule.get("ruleType") != Win32AppRuleType.REQUIREMENT:
-            rule["ruleType"] = Win32AppRuleType.REQUIREMENT
-    
-    # Combine all rules
-    rules = detection_rules + requirement_rules
-    
-    try:
-        # Step 1: Create a mobile app with all required properties
-        logger.info("Step 1: Creating mobile app...")
-        
-        app_body = {
-            "@odata.type": "#microsoft.graph.win32LobApp",
-            "displayName": display_name,
-            "description": description,
-            "publisher": publisher,
-            "isFeatured": False,
-            "fileName": os.path.basename(intunewin_file_path),
-            "setupFilePath": setup_file_path,
-            "installCommandLine": install_command_line,
-            "uninstallCommandLine": uninstall_command_line,
-            "rules": rules,
-            "installExperience": {
-                "@odata.type": "microsoft.graph.win32LobAppInstallExperience",
-                "runAsAccount": "system",
-                "deviceRestartBehavior": "basedOnReturnCode"
-            },
-            "returnCodes": [
-                {
-                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
-                    "returnCode": 0,
-                    "type": "success"
-                },
-                {
-                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
-                    "returnCode": 1641,
-                    "type": "softReboot"
-                },
-                {
-                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
-                    "returnCode": 3010,
-                    "type": "softReboot"
-                },
-                {
-                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
-                    "returnCode": 1603,
-                    "type": "failed"
-                }
-            ],
-            "minimumSupportedWindowsRelease": minimum_os,
-            "applicableArchitectures": architecture
-        }
-        
-        # Create the initial app with all properties
-        app_response = requests.post(
-            GRAPH_API_ENDPOINT,
-            headers=headers,
-            json=app_body
-        )
-        
-        if app_response.status_code not in (200, 201):
-            logger.error(f"Failed to create app: {app_response.status_code} - {app_response.text}")
-            return {"error": "API error: {app_response.status_code}", "details": app_response.text}
-        
-        app_result = app_response.json()
-        app_id = app_result.get("id")
-        logger.info(f"Created mobile app with ID: {app_id}")
-        
-        # Wait for app to propagate in Intune
-        logger.info("Waiting for app to propagate in Intune (5 seconds)...")
-        import time
-        time.sleep(5)  # Allow time for app propagation in Intune
-        
-        # Step 2: Create a content version for the app
-        logger.info("Step 2: Creating content version...")
-        encryption_info_dict = extract_file_encryption_info(intunewin_file_path)
-        if not encryption_info_dict:
-            return {'error': "Failed to extract encryption info from .intunewin file.", 'app_id': app_id}
-        expected_unencrypted_size = encryption_info_dict.get('UnencryptedContentSize')
-        content_version_result = create_content_version(headers, app_id)
-        if "error" in content_version_result:
-            return content_version_result
-        
-        content_version_id = content_version_result.get("id")
-        logger.info(f"Created content version with ID: {content_version_id}")
-        
-        # Wait for content version to propagate in Intune
-        logger.info("Waiting for content version to propagate (2 seconds)...")
-        time.sleep(2)
-        
-        # Step 3: Get content upload URLs
-        logger.info("Step 3: Getting content upload URLs...")
-        upload_urls_result = get_content_upload_urls(headers, app_id, content_version_id, intunewin_file_path)
-
-        # Check for errors first
-        if "error" in upload_urls_result:
-            logger.error(f"Failed to get upload URLs: {upload_urls_result['error']}")
-            return upload_urls_result
-
-        # Extract URL and file ID
-        upload_url = upload_urls_result.get("upload_url")
-        file_id = upload_urls_result.get("file_id")
-
-        if not upload_url or not file_id:
-            logger.error("Missing upload_url or file_id in the response from get_content_upload_urls.")
-            details = upload_urls_result.get("details", "No additional details provided.") # Provide details if possible
-            return {"error": "Missing upload URL or file ID.", "details": details}
-
-        logger.info(f"Successfully obtained upload URL and file ID: {file_id}")
-        
-        # Step 3.5: Extract File Encryption Info from .intunewin
-        logger.info("Extracting file encryption info...")
-        file_encryption_info = extract_file_encryption_info(intunewin_file_path)
-        if not file_encryption_info:
-            logger.error("Failed to extract file encryption info. Aborting deployment.")
-            # Consider cleanup: delete the created app/content version? (Potentially complex)
-            return {"error": "Failed to extract fileEncryptionInfo"}
-
-        expected_unencrypted_size_str = file_encryption_info.get('UnencryptedContentSize')
-        if not expected_unencrypted_size_str:
-            logger.error("UnencryptedContentSize not found in encryption info. Aborting.")
-            return {"error": "Missing UnencryptedContentSize in fileEncryptionInfo"}
-        try:
-            expected_unencrypted_size = int(expected_unencrypted_size_str)
-        except ValueError:
-            logger.error(f"Invalid UnencryptedContentSize: {expected_unencrypted_size_str}. Aborting.")
-            return {"error": "Invalid UnencryptedContentSize in fileEncryptionInfo"}
-
-        # Step 4: Decrypt locally and upload file chunks
-        logger.info("Step 4: Decrypting locally and uploading file chunks...")
-        upload_success, calculated_digest, calculated_mac_b64 = _decrypt_and_upload_chunks(
-            intunewin_file_path,
-            file_encryption_info, # Pass the extracted info
-            upload_url,
-            expected_unencrypted_size # Pass the expected size
-        )
-
-        if not upload_success:
-            logger.error("Decryption, size verification, or upload process failed. Aborting deployment.")
-            # Consider cleanup: delete the created app/content version?
-            return {"error": "Decryption/size check/upload failed"}
-
-        logger.info("File chunks uploaded successfully.")
-
-        # Update the encryption info with the *calculated* MAC before returning
-        if calculated_mac_b64: # Use the correct variable
-            logger.info(f"Updating MAC in returned encryption info with calculated value: {calculated_mac_b64}") # Use the correct variable
-            file_encryption_info['Mac'] = calculated_mac_b64 # Use the correct variable
-        else:
-            # This case should ideally not happen if decryption/verification succeeded, but log if it does
-            logger.warning("Calculated MAC was None, cannot update in returned encryption info.")
-
-        # Step 5: Commit the content version file
-        logger.info("Step 5: Committing the content version file...")
-        commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
-
-        # --- CHANGE HERE: Ensure commit uses values directly from file_encryption_info ---
-        commit_payload = {
-            "fileEncryptionInfo": {
-                "encryptionKey": file_encryption_info['EncryptionKey'],
-                "macKey": file_encryption_info['MacKey'],
-                "initializationVector": file_encryption_info['InitializationVector'],
-                "mac": file_encryption_info['Mac'], # Use the MAC from the XML
-                "profileIdentifier": file_encryption_info['ProfileIdentifier'],
-                "fileDigest": file_encryption_info['FileDigest'], # Use the Digest from the XML
-                "fileDigestAlgorithm": file_encryption_info['FileDigestAlgorithm']
-            }
-        }
-        # --- End Change ---
-        logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
-
-        commit_response = requests.post(
-            commit_url,
-            headers=headers,
-            json=commit_payload
-        )
-        
-        if commit_response.status_code in (200, 201, 202):
-            logger.info(f"Successfully committed content version file: {content_version_id}")
-        else:
-            logger.error(f"Failed to commit content version file: {commit_response.status_code} - {commit_response.text}")
-            return {
-                "error": f"API error: {commit_response.status_code}",
-                "details": commit_response.text
-            }
-    
-    except Exception as e:
-        logger.error(f"Exception during app deployment: {str(e)}")
-        return {"error": str(e)}
