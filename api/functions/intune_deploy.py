@@ -404,7 +404,44 @@ def deploy_win32_app(
                 "error": f"API error during commit: {status_code}",
                 "details": error_details
             }
-
+        # --- Post‑commit verification: ensure Intune shows the file as fully committed ---
+        verify_url = (
+            f"{GRAPH_API_ENDPOINT}/{app_id}"
+            f"/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}"
+        )
+        try:
+            verify_resp = requests.get(verify_url, headers=headers, timeout=60)
+            if verify_resp.status_code == 200:
+                verify_json = verify_resp.json()
+                upload_state = verify_json.get("uploadState")
+                is_committed_flag = verify_json.get("isCommitted")
+                logger.info(
+                    "Post‑commit verification: uploadState='%s', isCommitted=%s",
+                    upload_state,
+                    is_committed_flag,
+                )
+                if upload_state != "commitFileSuccess" or not is_committed_flag:
+                    logger.warning(
+                        "File commit accepted, but backend state is '%s'. "
+                        "Publishing may be delayed until Intune finishes processing.",
+                        upload_state,
+                    )
+                    
+                    # Poll for file commit status until isCommitted=True
+                    logger.info("Polling for file commitment before proceeding...")
+                    commit_wait_success = _poll_for_file_commit(headers, app_id, content_version_id, file_id)
+                    if not commit_wait_success:
+                        logger.error(f"File {file_id} was not committed within the timeout period. Proceeding with caution.")
+                        # We'll still try to continue, but note that the app may not be fully ready
+            else:
+                logger.warning(
+                    "Post‑commit verification failed: %s - %s",
+                    verify_resp.status_code,
+                    verify_resp.text,
+                )
+        except requests.exceptions.RequestException as e:
+            logger.warning("Post‑commit verification encountered network error: %s", e)
+        
         # --- ADDED Polling for Published State --- 
         logger.info("Polling for application publishing state before final update...")
         published_wait_success = _poll_for_app_published_state(headers, app_id)
@@ -1080,7 +1117,7 @@ def _commit_block_list(upload_url, block_ids):
         return False
 
 # --- ADDED HELPER FUNCTION for Polling App State ---
-def _poll_for_app_published_state(headers: Dict[str, str], app_id: str, timeout_minutes: int = 5, delay_seconds: int = 15) -> bool:
+def _poll_for_app_published_state(headers: Dict[str, str], app_id: str, timeout_minutes: int = 15, delay_seconds: int = 30) -> bool:
     """Polls the application status until its publishingState is 'Published' or 'Failed'."""
     start_time = time.time()
     timeout_seconds = timeout_minutes * 60
@@ -1126,3 +1163,65 @@ def _poll_for_app_published_state(headers: Dict[str, str], app_id: str, timeout_
         
     logger.error(f"Timeout: Application {app_id} did not reach 'Published' or 'Failed' state within {timeout_minutes} minutes.")
     return False
+
+# Polls the file commit status until isCommitted=True or timeout is reached
+def _poll_for_file_commit(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str, 
+                         timeout_minutes: int = 15, delay_seconds: int = 30) -> bool:
+    """
+    Poll for file commit status until isCommitted=True or timeout is reached.
+    
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+        content_version_id: ID of the content version
+        file_id: ID of the file being committed
+        timeout_minutes: Maximum time to poll in minutes
+        delay_seconds: Delay between polling attempts in seconds
+        
+    Returns:
+        Boolean indicating whether the file was successfully committed
+    """
+    logger.info(f"Polling for file commit completion... (timeout: {timeout_minutes} min, delay: {delay_seconds} sec)")
+    
+    url = (
+        f"{GRAPH_API_ENDPOINT}/{app_id}"
+        f"/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}"
+    )
+    
+    start_time = time.time()
+    timeout_seconds = timeout_minutes * 60
+    
+    while True:
+        # Check if we've exceeded the timeout
+        elapsed_seconds = time.time() - start_time
+        if elapsed_seconds > timeout_seconds:
+            logger.error(f"Timeout: File {file_id} was not committed within {timeout_minutes} minutes.")
+            return False
+            
+        try:
+            response = requests.get(url, headers=headers, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                upload_state = result.get("uploadState")
+                is_committed = result.get("isCommitted")
+                
+                logger.info(f"File commit status check: uploadState='{upload_state}', isCommitted={is_committed}")
+                
+                # If the file is committed, we're done
+                if is_committed is True:
+                    logger.info(f"File successfully committed after {elapsed_seconds:.1f} seconds.")
+                    return True
+                
+                # If upload state indicates a failure, log it but continue polling
+                if "fail" in upload_state.lower():
+                    logger.warning(f"File commit appears to have issues (state: '{upload_state}'), but will continue polling...")
+            else:
+                logger.warning(f"Failed to get file status: {response.status_code} - {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Network error during file commit polling: {e}")
+            
+        # Wait before trying again
+        logger.debug(f"Waiting {delay_seconds} seconds before next commit status check...")
+        time.sleep(delay_seconds)
