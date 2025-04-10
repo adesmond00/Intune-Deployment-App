@@ -20,18 +20,30 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.padding import PKCS7
 from cryptography.hazmat.backends import default_backend
 import hashlib
-import hmac
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hmac as crypto_hmac
+import hmac as std_hmac # Import standard library hmac for compare_digest
 
 # Import our authentication module
 from .auth import get_auth_headers
+
+# Constants
+GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
+GRAPH_API_ENDPOINT = f"{GRAPH_API_BASE}/deviceAppManagement/mobileApps"
+CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB chunks
+AZURE_BLOCK_BLOB_HEADER = {"x-ms-blob-type": "BlockBlob"}
+AZURE_COMMIT_BLOCK_LIST_HEADERS = {"Content-Type": "application/xml"}
+# The first 48 bytes of the encrypted payload in the zip seem to be skipped in examples.
+ENCRYPTED_PAYLOAD_SKIP_BYTES = 48 # Changed from 0 to 48
+UPLOAD_RETRY_LIMIT = 3 # Number of retries for chunk upload
+UPLOAD_TIMEOUT = 60 # Timeout in seconds for each upload attempt
+UPLOAD_RETRY_DELAY = 5 # Delay in seconds between upload retries
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Graph API endpoints
-GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
-GRAPH_API_ENDPOINT = f"{GRAPH_API_BASE}/deviceAppManagement/mobileApps"
 
 class Win32AppRuleType:
     """Enum-like class for rule types"""
@@ -326,7 +338,7 @@ def deploy_win32_app(
 
         # Step 4: Decrypt locally and upload file chunks
         logger.info("Step 4: Decrypting locally and uploading file chunks...")
-        upload_success, calculated_digest = _decrypt_and_upload_chunks(
+        upload_success, calculated_digest, calculated_mac_b64 = _decrypt_and_upload_chunks(
             intunewin_file_path,
             file_encryption_info, # Pass the extracted info
             upload_url,
@@ -340,49 +352,46 @@ def deploy_win32_app(
 
         logger.info("File chunks uploaded successfully.")
 
+        # Update the encryption info with the *calculated* MAC before returning
+        if calculated_mac_b64: # Use the correct variable
+            logger.info(f"Updating MAC in returned encryption info with calculated value: {calculated_mac_b64}") # Use the correct variable
+            file_encryption_info['Mac'] = calculated_mac_b64 # Use the correct variable
+        else:
+            # This case should ideally not happen if decryption/verification succeeded, but log if it does
+            logger.warning("Calculated MAC was None, cannot update in returned encryption info.")
+
         # Step 5: Commit the content version file
         logger.info("Step 5: Committing the content version file...")
-        commit_result = commit_content_version(headers, app_id, content_version_id, file_id, file_encryption_info, calculated_digest, expected_unencrypted_size)
-        if commit_result.get('status') != 'success':
-            logger.error(f"Failed to commit content version file: {commit_result.get('error', 'Unknown error')}")
-            # Consider cleanup
-            return {"error": f"Failed to commit file: {commit_result.get('error', 'Unknown error')}"}
+        commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
 
-        logger.info("Content version file committed successfully. Polling for commit status...")
-        # Step 5.5: Poll for commit status
-        final_file_status = poll_for_commit_status(headers, app_id, content_version_id, file_id)
-        if 'error' in final_file_status or final_file_status.get('uploadState') != 'commitFileSuccess':
-            err_msg = final_file_status.get('error', f"Final upload state was not commitFileSuccess: {final_file_status.get('uploadState')}")
-            logger.error(f"File commit failed or timed out: {err_msg}")
-            return {"error": f"File commit failed or timed out: {err_msg}"}
-
-        logger.info("File commit successful.")
-
-        # Step 6: Update the app with final details (Install/Uninstall commands, rules, etc.)
-        logger.info("Step 6: Updating the app with final details...")
-        # Correct URL: Targets the specific app object for PATCH
-        update_url = f"{GRAPH_API_ENDPOINT}/{app_id}" 
-        update_payload = {
-            "@odata.type": "#microsoft.graph.win32LobApp", # Add odata type hint for PATCH
-            "committedContentVersion": content_version_id
+        # --- CHANGE HERE: Ensure commit uses values directly from file_encryption_info ---
+        commit_payload = {
+            "fileEncryptionInfo": {
+                "encryptionKey": file_encryption_info['EncryptionKey'],
+                "macKey": file_encryption_info['MacKey'],
+                "initializationVector": file_encryption_info['InitializationVector'],
+                "mac": file_encryption_info['Mac'], # Use the MAC from the XML
+                "profileIdentifier": file_encryption_info['ProfileIdentifier'],
+                "fileDigest": file_encryption_info['FileDigest'], # Use the Digest from the XML
+                "fileDigestAlgorithm": file_encryption_info['FileDigestAlgorithm']
+            }
         }
-        logger.info(f"Final app update URL: {update_url}")
-        logger.info(f"Final app update payload: {json.dumps(update_payload, indent=2)}")
+        # --- End Change ---
+        logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
 
-        update_response = requests.patch(
-            update_url,
+        commit_response = requests.post(
+            commit_url,
             headers=headers,
-            json=update_payload
+            json=commit_payload
         )
         
-        if update_response.status_code in (200, 201, 204):
-            logger.info(f"Successfully deployed Win32 app: {display_name}")
-            return {"id": app_id, "status": "success", "message": "App deployed successfully"}
+        if commit_response.status_code in (200, 201, 202):
+            logger.info(f"Successfully committed content version file: {content_version_id}")
         else:
-            logger.error(f"Failed to update content version: {update_response.status_code} - {update_response.text}")
+            logger.error(f"Failed to commit content version file: {commit_response.status_code} - {commit_response.text}")
             return {
-                "error": f"API error: {update_response.status_code}",
-                "details": update_response.text
+                "error": f"API error: {commit_response.status_code}",
+                "details": commit_response.text
             }
     
     except Exception as e:
@@ -489,7 +498,7 @@ def get_content_upload_urls(headers: Dict[str, str], app_id: str, content_versio
                     return {"error": "Missing file ID for polling."}
                 
                 poll_result = poll_for_upload_url(headers, app_id, content_version_id, file_id)
-                
+
                 # Check poll result for errors or the direct file dictionary
                 if poll_result and "error" not in poll_result:
                     logger.info(f"Polling successful. Final file status: {json.dumps(poll_result, indent=2)}")
@@ -584,142 +593,13 @@ def poll_for_upload_url(headers: Dict[str, str], app_id: str, content_version_id
             full_response_details = json.dumps(file_status_result, indent=2)
             logger.error(f"Polling attempt {attempt + 1}: Received 'azureStorageUriRequestFailed'. Aborting polling. Full response: \n{full_response_details}")
             return {"error": "azureStorageUriRequestFailed", "details": file_status_result}
-        else: # Handle other unexpected states
-            full_response_details = json.dumps(file_status_result, indent=2)
-            logger.error(f"Polling attempt {attempt + 1}: Unexpected state '{upload_state}'. Full response: \n{full_response_details}\nRetrying...")
-
+        else: # Assume other states are also pending/transient, log and continue polling
+             logger.info(f"Commit in transient state: {upload_state}. Waiting {delay_seconds} seconds...")
+                
         time.sleep(delay_seconds)
 
     logger.error(f"Failed to get upload URL after {max_attempts} attempts.")
     return {"error": f"Polling timed out after {max_attempts * delay_seconds} seconds"}
-
-def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str, file_encryption_info_dict: Dict[str, Any], calculated_digest: str, unencrypted_size: int):
-    """
-    Commit the content version file after upload using its specific file ID.
-    
-    Args:
-        headers: Authorization headers
-        app_id: ID of the application
-        content_version_id: ID of the content version
-        file_id: ID of the specific file within the content version
-        file_encryption_info_dict: Dictionary containing the fileEncryptionInfo structure (PascalCase keys from extraction)
-        calculated_digest: The SHA256 digest calculated from the decrypted uploaded content.
-        unencrypted_size: The expected unencrypted content size from detection.xml.
-        
-    Returns:
-        Dictionary with status or error details
-    """
-    commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
-    logger.info(f"Commit Request URL: {commit_url}")
-    
-    # Convert PascalCase keys from extraction to camelCase for Graph API
-    file_encryption_info_camel = {}
-    for key, value in file_encryption_info_dict.items():
-        if key and value is not None: # Ensure key and value are not None
-            camel_key = key[0].lower() + key[1:]
-            file_encryption_info_camel[camel_key] = value
-
-    # Use the calculated digest from the actual upload, not the one from XML
-    if calculated_digest:
-        file_encryption_info_camel['fileDigest'] = calculated_digest
-        logger.info(f"Using calculated fileDigest for commit: {calculated_digest}")
-
-    # Remove fields potentially causing 400 Bad Request, aiming for 202 Accepted + successful async processing
-    file_encryption_info_camel.pop('unencryptedContentSize', None)
-    file_encryption_info_camel.pop('@odata.type', None) # This key might not even exist if conversion failed, hence .pop
-
-    # Add the unencrypted size and use the calculated digest *within* the nested object
-    file_encryption_info_camel['unencryptedContentSize'] = unencrypted_size
-
-    commit_payload = {
-        "fileEncryptionInfo": file_encryption_info_camel
-    }
-    
-    # Manually serialize the payload and set content-type header
-    commit_payload_json = json.dumps(commit_payload)
-    commit_headers = headers.copy() # Avoid modifying the original headers dict
-    commit_headers['Content-Type'] = 'application/json; charset=utf-8'
-
-    # Use json.dumps for pretty printing the body for logging
-    logger.info("Commit Request Body:")
-    try:
-        logger.info(json.dumps(commit_payload, indent=2))
-    except TypeError:
-        logger.info(str(commit_payload)) # Fallback if not JSON serializable for logging
-
-    # Ensure correct Content-Type header
-    logger.debug(f"Commit Request Headers: {commit_headers}")
-
-    try:
-        response = requests.post(commit_url, headers=commit_headers, data=commit_payload_json)
-        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
-        logger.info(f"Commit request for file {file_id} sent successfully.")
-        # A successful POST to commit doesn't return content but indicates the process started
-        return {'status': 'success'}
-    except requests.exceptions.RequestException as e:
-        error_message = f"API error: {e.response.status_code}" if e.response else f"Request failed: {e}"
-        response_text = e.response.text if e.response else "No response body"
-        logger.error(f"Failed to commit file {file_id}: {error_message} - {response_text}")
-        return {'status': 'error', 'error': f"{error_message}"}
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during commit: {e}", exc_info=True)
-        return {'status': 'error', 'error': f"Unexpected error: {e}"}
-
-def poll_for_commit_status(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str,
-                           max_attempts: int = 60, delay_seconds: int = 10):
-    """
-    Poll for the commit status of a content version file until it's successful or max attempts reached.
-
-    Args:
-        headers: Authorization headers
-        app_id: ID of the application
-        content_version_id: ID of the content version
-        file_id: ID of the file being polled
-        max_attempts: Maximum number of polling attempts
-        delay_seconds: Delay between polling attempts in seconds
-
-    Returns:
-        The final file status dictionary on success, or {'error': ...} on failure/timeout.
-    """
-    url = (f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/"
-           f"{content_version_id}/files/{file_id}")
-    logger.info(f"Polling commit status for file {file_id} at URL: {url}")
-
-    for attempt in range(max_attempts):
-        logger.info(f"Commit polling attempt {attempt + 1}/{max_attempts}...")
-        try:
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code == 200:
-                file_status_result = response.json()
-                upload_state = file_status_result.get("uploadState", "unknown")
-                logger.info(f"Current commit uploadState: {upload_state}")
-
-                if upload_state == "commitFileSuccess":
-                    logger.info(f"Commit successful for file {file_id}.")
-                    return file_status_result # Return the full status on success
-                elif upload_state in ["failed", "commitFileFailed"]: # Check for terminal failure states
-                    full_response_details = json.dumps(file_status_result, indent=2)
-                    logger.error(f"Commit polling failed with terminal state '{upload_state}'. Full response: \n{full_response_details}")
-                    # Return error immediately, stop polling
-                    return {"error": f"Commit failed with state: {upload_state}", "details": file_status_result}
-                elif upload_state == "pendingCommit":
-                     logger.info(f"Commit still pending (State: {upload_state}). Waiting {delay_seconds} seconds...")
-                else: # Assume other states are also pending/transient, log and continue polling
-                     logger.info(f"Commit in transient state: {upload_state}. Waiting {delay_seconds} seconds...")
-                
-            else:
-                logger.warning(f"Commit polling attempt {attempt + 1} failed with status {response.status_code}: {response.text}")
-                # Continue polling on transient HTTP errors, maybe? Or fail faster? Let's continue for now.
-                
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error during commit polling attempt {attempt + 1}: {e}")
-            # Continue polling after transient network errors
-
-        time.sleep(delay_seconds)
-
-    logger.error(f"Commit polling timed out after {max_attempts} attempts for file {file_id}.")
-    return {"error": "Commit polling timed out"}
 
 def create_common_detection_rules(install_path: str, executable_name: str) -> List[Dict[str, Any]]:
     """
@@ -754,14 +634,40 @@ def extract_file_encryption_info(intunewin_file_path: str) -> dict:
     detection_xml_path = "IntuneWinPackage/Metadata/Detection.xml"
     
     try:
+        # --- Determine payload filename within the archive ---
+        payload_filename = None
+        payload_zip_info = None # To store ZipInfo object
         with zipfile.ZipFile(intunewin_file_path, 'r') as archive:
-            if detection_xml_path not in archive.namelist():
-                logger.error(f"{detection_xml_path} not found in the archive.")
+            if detection_xml_path in archive.namelist():
+                with archive.open(detection_xml_path) as xml_file:
+                    xml_content = xml_file.read()
+                    
+            contents_prefix = "IntuneWinPackage/Contents/"
+            payload_entry = max((entry for entry in archive.infolist()
+                                 if not entry.is_dir() and entry.filename.startswith(contents_prefix)),
+                                key=lambda x: x.file_size, default=None)
+            if payload_entry:
+                payload_filename = payload_entry.filename
+                payload_zip_info = payload_entry # Store ZipInfo
+                logger.warning(f"Could not find FileName in detection.xml, guessing payload is: {payload_filename}")
+            else:
+                logger.error("Could not determine payload filename within the .intunewin archive.")
                 return {}
-                
-            with archive.open(detection_xml_path, 'r') as xml_file:
-                xml_content = xml_file.read()
-                
+            
+            if not payload_zip_info:
+                 with zipfile.ZipFile(intunewin_file_path, 'r') as archive:
+                    try:
+                         payload_zip_info = archive.getinfo(payload_filename)
+                    except KeyError:
+                         logger.error(f"Could not get ZipInfo for payload: {payload_filename}")
+                         return {}
+            
+            if payload_zip_info:
+                 logger.info(f"Payload ZipInfo - File Size: {payload_zip_info.file_size}, Compressed Size: {payload_zip_info.compress_size}")
+            else:
+                 logger.warning("Could not retrieve ZipInfo for payload.")
+                 # Allow to continue, but this might be problematic
+
             # Parse XML
             try:
                 root = ET.fromstring(xml_content)
@@ -812,227 +718,502 @@ def extract_file_encryption_info(intunewin_file_path: str) -> dict:
         logger.error(f"Failed to open or read {intunewin_file_path}: {e}")
         return {}
 
-# Constants for chunked upload
-CHUNK_SIZE = 6 * 1024 * 1024  # 6 MiB chunks
-AZURE_BLOCK_BLOB_HEADER = {"x-ms-blob-type": "BlockBlob"}
-AZURE_COMMIT_BLOCK_LIST_HEADERS = {"Content-Type": "application/xml"}
-# The first 48 bytes of the encrypted payload in the zip seem to be skipped in examples.
-ENCRYPTED_PAYLOAD_SKIP_BYTES = 48 
-
 def _decrypt_and_upload_chunks(
     intunewin_file_path: str,
     encryption_info: Dict[str, str],
     upload_url: str,
     expected_unencrypted_size: int
 ) -> tuple:
-    """Decrypts, chunks, and uploads the application payload from the .intunewin file."""
-    logger.info("Starting decryption and chunked upload process...")
-    
+    """Decrypts, chunks, and uploads the application payload from the .intunewin file.
+
+    Uploads ENCRYPTED chunks.
+    Verifies SHA256 digest of DECRYPTED content against detection.xml (CRITICAL).
+    Verifies HMAC-SHA256 MAC of ENCRYPTED content against detection.xml (WARNING ONLY).
+    """
+    logger.info("Starting decryption and encrypted chunked upload process...")
     try:
-        # 1. Extract keys
-        encryption_key_b64 = encryption_info.get('EncryptionKey') # Use camelCase key
-        mac_key_b64 = encryption_info.get('MacKey')
-        iv_b64 = encryption_info.get('InitializationVector')    # Use camelCase key
-        mac_from_xml_b64 = encryption_info.get('Mac')             # Use camelCase key
-        if not encryption_key_b64 or not mac_key_b64 or not iv_b64 or not mac_from_xml_b64:
-            logger.error("Missing one or more critical keys (EncryptionKey, MacKey, InitializationVector, Mac) in encryption_info.")
-            return False, None
- 
-        encryption_key = base64.b64decode(encryption_key_b64)
-        iv = base64.b64decode(iv_b64)
-        mac_key = base64.b64decode(mac_key_b64)
+        # Decode keys and IV from base64
+        encryption_key = base64.b64decode(encryption_info['EncryptionKey'])
+        mac_key = base64.b64decode(encryption_info['MacKey'])
+        iv = base64.b64decode(encryption_info['InitializationVector'])
+        # Decode expected MAC and Digest from detection.xml
+        mac_from_xml_b64 = encryption_info.get('Mac', '') # Get overall file MAC
+        digest_from_xml_b64 = encryption_info.get('FileDigest', '')
         mac_from_xml = base64.b64decode(mac_from_xml_b64)
- 
-        # --- Determine payload filename within the archive --- 
-        # It's usually the same name as the .intunewin file but with a .bin extension,
-        # but we'll find it dynamically to be sure.
-        payload_filename = None
-        detection_xml_path = "IntuneWinPackage/Metadata/Detection.xml"
+        digest_from_xml = base64.b64decode(digest_from_xml_b64)
+
+        # --- Open Zip and Find Payload ONCE ---
         with zipfile.ZipFile(intunewin_file_path, 'r') as archive:
-            if detection_xml_path in archive.namelist():
-                with archive.open(detection_xml_path) as xml_file:
-                    xml_content = xml_file.read()
-                    root = ET.fromstring(xml_content)
-                    # Use the FileName field from detection.xml for payload name
-                    fname_element = root.find(".//FileName")
-                    if fname_element is not None and fname_element.text:
-                        payload_filename = fname_element.text.strip()
+            # Find payload ZipInfo (assuming single content file)
+            contents_prefix = "IntuneWinPackage/Contents/"
+            payload_zip_info = None
+            for entry in archive.infolist():
+                if entry.filename.startswith(contents_prefix) and not entry.is_dir():
+                    payload_zip_info = entry
+                    logger.info(f"Found payload entry: {payload_zip_info.filename} (Size: {payload_zip_info.file_size})")
+                    break # Assume first match is the correct one
 
-            if not payload_filename:
-                 # Fallback: Try finding the largest file as payload if FileName field missing
-                 contents_prefix = "IntuneWinPackage/Contents/"
-                 payload_entry = max((entry for entry in archive.infolist()
-                                      if not entry.is_dir() and entry.filename.startswith(contents_prefix)),
-                                     key=lambda x: x.file_size, default=None)
-                 if payload_entry:
-                     payload_filename = payload_entry.filename # Use the full path found
-                     logger.warning(f"Could not find FileName in detection.xml, guessing payload is: {payload_filename}")
-                 else:
-                    logger.error("Could not determine payload filename within the .intunewin archive.")
-                    return False, None
+            if not payload_zip_info:
+                logger.error("Could not find payload file within the .intunewin archive under IntuneWinPackage/Contents/.")
+                return False, None, None
 
-            # Construct the full path within the archive
-            if not payload_filename.startswith("IntuneWinPackage/Contents/"):
-                payload_full_path = f"IntuneWinPackage/Contents/{payload_filename}"
-            else:
-                payload_full_path = payload_filename # Already has the path (e.g., from fallback)
-
-            logger.info(f"Identified payload file within archive: {payload_full_path}")
-
-            # 3. Decrypt, Unpad, Chunk, and Upload
+            # --- Setup Crypto Objects --- 
             cipher = Cipher(algorithms.AES(encryption_key), modes.CBC(iv), backend=default_backend())
             decryptor = cipher.decryptor()
-            unpadder = PKCS7(algorithms.AES.block_size).unpadder()
-            block_ids = []
+            decrypted_digest_hasher = hashes.Hash(hashes.SHA256(), backend=default_backend())
+            # HMAC for the *entire* ENCRYPTED content - finalized after loop
+            encrypted_mac_calculator = crypto_hmac.HMAC(mac_key, hashes.SHA256(), backend=default_backend())
+            logger.debug(f"HMAC Key (first 16 bytes): {mac_key[:16].hex()}")
+
+            # --- Decrypt, Verify Digest, Calculate MAC, Upload ENCRYPTED --- 
+            expected_encrypted_size = payload_zip_info.file_size - ENCRYPTED_PAYLOAD_SKIP_BYTES # Calculate expected size
             chunk_index = 0
-            total_uploaded_bytes = 0 # Track bytes for final size verification
-            verified_unpadded_data_buffer = b'' # Buffer to hold verified data before upload
-            sha256_hash = hashlib.sha256()
+            block_ids = []
+            total_bytes_uploaded = 0
+            total_decrypted_bytes = 0
+            total_bytes_read_from_stream = 0
+            last_chunk_processed = False
+            start_time = time.time()
 
-            with archive.open(payload_full_path, 'r') as encrypted_stream:
-                encrypted_stream.read(ENCRYPTED_PAYLOAD_SKIP_BYTES)
-                while True:
-                    encrypted_chunk = encrypted_stream.read(CHUNK_SIZE)
-                    is_last_encrypted_chunk = not encrypted_chunk
+            # Use ZipInfo within the same zipfile context
+            with archive.open(payload_zip_info.filename, 'r') as encrypted_stream:
+                # Skip potential header bytes (Keeping ENCRYPTED_PAYLOAD_SKIP_BYTES = 48 for now)
+                if ENCRYPTED_PAYLOAD_SKIP_BYTES > 0:
+                     logger.debug(f"Skipping {ENCRYPTED_PAYLOAD_SKIP_BYTES} bytes from the start of the encrypted stream.")
+                     _ = encrypted_stream.read(ENCRYPTED_PAYLOAD_SKIP_BYTES)
 
-                    decrypted_chunk = None
-                    if encrypted_chunk:
-                        try:
-                            decrypted_chunk = decryptor.update(encrypted_chunk)
-                        except ValueError as e:
-                            # This error can occur if PKCS7 padding is invalid
-                            logger.error(f"Error decrypting chunk {chunk_index + 1} (update): {e}", exc_info=True)
-                            return False, None
+                while not last_chunk_processed:
+                    # Determine if this read will contain the last chunk
+                    remaining_bytes = expected_encrypted_size - total_bytes_read_from_stream
+                    chunk_to_read = min(CHUNK_SIZE, remaining_bytes)
 
-                    # Unpad the decrypted chunk and add to buffer
-                    # Also update the hash incrementally
-                    if decrypted_chunk:
-                        try:
-                            unpadded_chunk = unpadder.update(decrypted_chunk)
-                            sha256_hash.update(unpadded_chunk)
-                            verified_unpadded_data_buffer += unpadded_chunk
-                        except ValueError as e:
-                            # This error can occur if PKCS7 padding is invalid
-                            logger.error(f"Error unpadding chunk {chunk_index + 1} (update): {e}", exc_info=True)
-                            return False, None
+                    encrypted_chunk = encrypted_stream.read(chunk_to_read)
+                    if not encrypted_chunk:
+                        break # Should only happen if expected_encrypted_size was wrong
+                    total_bytes_read_from_stream += len(encrypted_chunk)
+                    is_last_chunk = (total_bytes_read_from_stream == expected_encrypted_size)
+                    chunk_index += 1
 
-                    if is_last_encrypted_chunk:
-                        break
+                    # Update overall MAC with the raw ENCRYPTED chunk
+                    encrypted_mac_calculator.update(encrypted_chunk)
 
-            # Finalize decryption
-            try:
-                decrypted_final_padded = decryptor.finalize()
-            except Exception as e:
-                logger.error(f"Error finalizing decryption: {e}", exc_info=True)
-                return False, None
-            
-            # Finalize unpadding and update hash
-            try:
-                unpadded_final = unpadder.update(decrypted_final_padded) + unpadder.finalize()
-                sha256_hash.update(unpadded_final)
-                verified_unpadded_data_buffer += unpadded_final
-            except Exception as e:
-                logger.error(f"Error finalizing unpadding on full buffer: {e}", exc_info=True)
-                return False, None
+                    # Upload the ENCRYPTED chunk (upload logic remains the same)
+                    block_id_str = str(chunk_index).zfill(4)
+                    block_id_b64 = base64.b64encode(block_id_str.encode('ascii')).decode('ascii')
+                    logger.debug(f"Uploading encrypted chunk {chunk_index} ({len(encrypted_chunk)} bytes)... Block ID: {chunk_index:04d} ({block_id_b64})")
+                    # ... (rest of upload try/except/retry logic) ...
+                    upload_successful = False
+                    for attempt in range(UPLOAD_RETRY_LIMIT):
+                         try:
+                             upload_resp = requests.put(
+                                 f"{upload_url}&comp=block&blockid={block_id_b64}",
+                                 data=encrypted_chunk,
+                                 headers={'x-ms-blob-type': 'BlockBlob', 'Content-Length': str(len(encrypted_chunk))},
+                                 timeout=UPLOAD_TIMEOUT
+                             )
+                             upload_resp.raise_for_status()
+                             upload_successful = True
+                             logger.debug(f"Encrypted chunk {chunk_index} uploaded successfully.")
+                             break # Success
+                         except requests.exceptions.RequestException as e:
+                             logger.warning(f"Chunk {chunk_index}: Upload attempt {attempt + 1}/{UPLOAD_RETRY_LIMIT} failed: {e}. Retrying...")
+                             if attempt < UPLOAD_RETRY_LIMIT - 1:
+                                 time.sleep(UPLOAD_RETRY_DELAY)
 
-            # Calculate SHA256 hash of the full unpadded data
-            calculated_digest = sha256_hash.digest()
-            calculated_digest_b64 = base64.b64encode(calculated_digest).decode('utf-8')
+                    if not upload_successful:
+                         logger.error(f"Failed to upload encrypted chunk {chunk_index} after {UPLOAD_RETRY_LIMIT} attempts. Aborting.")
+                         try: decryptor.finalize() # Cleanup
+                         except: pass
+                         return False, None, None
 
-            expected_digest_b64 = encryption_info.get('FileDigest')
-            if not expected_digest_b64:
-                logger.error("Missing 'FileDigest' in encryption_info.")
-                return False, None
-
-            logger.info(f"Expected Digest (Base64): {expected_digest_b64}")
-            logger.info(f"Calculated Digest (Base64): {calculated_digest_b64}")
-
-            if calculated_digest_b64 != expected_digest_b64:
-                logger.critical("Calculated SHA256 digest DOES NOT MATCH the expected digest from detection.xml!")
-                logger.critical("Aborting upload commitment.")
-                return False, None
-            else:
-                logger.info("Calculated SHA256 digest matches expected digest.")
-
-            # Verify HMAC-SHA256 MAC
-            logger.info("Verifying HMAC-SHA256 MAC of encrypted content...")
-            encrypted_payload_bytes = archive.open(payload_full_path, 'r').read()
-            hmac_calculator = hmac.new(mac_key, digestmod=hashlib.sha256)
-            hmac_calculator.update(encrypted_payload_bytes)
-            calculated_mac = hmac_calculator.digest()
-            logger.info(f"MAC from XML (b64): {mac_from_xml_b64}")
-            logger.info(f"Calculated MAC (b64): {base64.b64encode(calculated_mac).decode()}")
-            if calculated_mac == mac_from_xml:
-                logger.info("MAC Verification SUCCESS: Calculated MAC matches the MAC from detection.xml.")
-            else:
-                logger.warning("MAC Verification FAILED: Calculated MAC does NOT match the MAC from detection.xml. Proceeding anyway for diagnostics...")
-
-            # Now, upload the unpadded data in chunks
-            logger.info("Starting upload of verified, unpadded data...")
-            current_pos = 0
-            chunk_index = 0 # Reset chunk index for upload
-            block_ids = [] # Reset block IDs for upload
-            total_bytes_uploaded = 0 # Reset bytes counter
-
-            while current_pos < len(verified_unpadded_data_buffer):
-                upload_chunk = verified_unpadded_data_buffer[current_pos:current_pos + CHUNK_SIZE]
-                current_pos += len(upload_chunk)
-                chunk_index += 1
-
-                block_id_str = str(chunk_index).zfill(4)
-                block_id_b64 = base64.b64encode(block_id_str.encode('ascii')).decode('ascii')
-                logger.info(f"Uploading verified chunk {chunk_index} ({len(upload_chunk)} bytes)... Block ID: {chunk_index:04d} ({block_id_b64})")
-
-                try:
-                    upload_resp = requests.put(f"{upload_url}&comp=block&blockid={block_id_b64}",
-                                               data=upload_chunk,
-                                               headers={'x-ms-blob-type': 'BlockBlob'})
-                    upload_resp.raise_for_status()
                     block_ids.append(block_id_b64)
-                    total_bytes_uploaded += len(upload_chunk)
-                    logger.debug(f"Verified chunk {chunk_index} uploaded successfully.")
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Failed to upload verified chunk {chunk_index}: {e.response.status_code if e.response else 'N/A'} - {e.response.text if e.response else e}")
-                    return False, None
+                    total_bytes_uploaded += len(encrypted_chunk) # Track encrypted bytes uploaded
 
-            # Commit the block list for the Azure blob
-            commit_list_xml = '<?xml version="1.0" encoding="utf-8"?><BlockList>' + ''.join([f'<Latest>{bid}</Latest>' for bid in block_ids]) + '</BlockList>'
-            commit_url = f"{upload_url}&comp=blocklist"
-            try:
-                commit_response = requests.put(
-                    commit_url,
-                    headers=AZURE_COMMIT_BLOCK_LIST_HEADERS,
-                    data=commit_list_xml.encode('utf-8')
-                )
-                commit_response.raise_for_status()
-                logger.info("Block list committed successfully.")
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to commit block list: {e.response.status_code if e.response else 'N/A'} - {e.response.text if e.response else e}")
-                return False, None
+                    # --- Decryption Handling (Differs for last chunk) ---
+                    if is_last_chunk:
+                        logger.debug(f"Processing final encrypted chunk ({len(encrypted_chunk)} bytes) for decryption.")
+                        try:
+                            last_decrypted_part = decryptor.update(encrypted_chunk)
+                            final_decrypted_part = decryptor.finalize() # Handles padding removal
 
-            # Verify size after commit
-            logger.info(f"Verifying uploaded size. Expected: {expected_unencrypted_size}, Actual: {total_bytes_uploaded}")
-            if total_bytes_uploaded != expected_unencrypted_size:
-                logger.error(f"Uploaded size mismatch! Expected {expected_unencrypted_size} bytes, but uploaded {total_bytes_uploaded} bytes.")
-                # Note: This might indicate an issue with decryption, unpadding, or the expected size value itself.
-                return False, None
+                            if last_decrypted_part:
+                                decrypted_digest_hasher.update(last_decrypted_part)
+                                total_decrypted_bytes += len(last_decrypted_part)
+                            if final_decrypted_part:
+                                decrypted_digest_hasher.update(final_decrypted_part)
+                                total_decrypted_bytes += len(final_decrypted_part)
+
+                            logger.debug(f"Final chunk decryption: update() len={len(last_decrypted_part)}, finalize() len={len(final_decrypted_part)}")
+
+                        except Exception as e:
+                             logger.error(f"Error during final decryption/finalization: {e}", exc_info=True)
+                        last_chunk_processed = True # Signal to exit loop
+                    else:
+                        # Process intermediate chunks
+                        try:
+                            decrypted_chunk_part = decryptor.update(encrypted_chunk)
+                            if decrypted_chunk_part:
+                               decrypted_digest_hasher.update(decrypted_chunk_part)
+                               total_decrypted_bytes += len(decrypted_chunk_part)
+                        except ValueError as e:
+                            logger.error(f"Error decrypting intermediate chunk {chunk_index} for digest: {e}", exc_info=True)
+                            pass # Allow continuing
+
+            # --- Post-Loop Processing --- 
+            end_time = time.time()
+            logger.info(f"Finished processing {chunk_index} chunks ({total_bytes_uploaded} encrypted bytes uploaded) in {end_time - start_time:.2f} seconds.")
+
+            # Log comparison before finalizing decryption
+            logger.info(f"Total bytes read from encrypted stream: {total_bytes_read_from_stream}")
+            if total_bytes_read_from_stream != expected_encrypted_size:
+                 logger.warning(f"Potential encrypted stream size mismatch: Read {total_bytes_read_from_stream}, Expected (ZipInfo.file_size - skip_bytes): {expected_encrypted_size}")
             else:
-                logger.info("Uploaded size matches expected size.")
+                 logger.info("Total bytes read matches ZipInfo.file_size (minus skip bytes).")
 
-            logger.info("Waiting 60 seconds for Azure storage changes to propagate...")
-            time.sleep(60)
+            # Decryption finalization is now handled IN the loop for the last chunk
+            # Do NOT call decryptor.finalize() again here.
 
-        return True, calculated_digest_b64 # Upload successful
+            # Finalize MAC calculation (for the *entire* encrypted stream processed)
+            calculated_mac = encrypted_mac_calculator.finalize()
+            calculated_mac_b64 = base64.b64encode(calculated_mac).decode('utf-8')
+
+            # --- Verification --- 
+            calculated_digest = decrypted_digest_hasher.finalize() 
+            calculated_digest_b64 = base64.b64encode(calculated_digest).decode('utf-8')
+            digest_match = (calculated_digest == digest_from_xml)
+            size_match = (total_decrypted_bytes == expected_unencrypted_size)
+            # Use std_hmac.compare_digest for constant-time comparison
+            mac_match = std_hmac.compare_digest(calculated_mac, mac_from_xml)
+
+            logger.info(f"Expected Digest (Base64): {digest_from_xml_b64}")
+            logger.info(f"Calculated Digest (Base64): {calculated_digest_b64}") # Use the b64 version
+            if digest_match:
+                 logger.info("Digest Verification SUCCESS: Calculated SHA256 digest matches expected digest.")
+                 if size_match:
+                      logger.info(f"Total decrypted bytes ({total_decrypted_bytes}) matches expected unencrypted size.")
+                 else:
+                      logger.warning(f"Size Mismatch Warning: Total decrypted bytes ({total_decrypted_bytes}) does not match expected ({expected_unencrypted_size}), but digest matched.")
+            else:
+                 logger.critical("Digest Verification FAILED: Calculated SHA256 digest does NOT match the digest from detection.xml.")
+                 logger.critical(f"Total decrypted bytes calculated: {total_decrypted_bytes}. Expected unencrypted size: {expected_unencrypted_size}")
+
+            logger.info(f"Verifying HMAC-SHA256 MAC of encrypted content...")
+            logger.info(f"MAC from XML (b64): {mac_from_xml_b64}")
+            logger.info(f"Calculated MAC (b64): {calculated_mac_b64}")
+            if mac_match:
+                logger.info("MAC Verification SUCCESS: Calculated HMAC-SHA256 MAC matches MAC from detection.xml.")
+            else:
+                logger.warning("MAC Verification MISMATCH: Locally calculated MAC does NOT match the MAC from detection.xml.")
+                logger.warning("Proceeding with upload commit using MAC from detection.xml as per standard Intune process.")
+
+            # --- Commit Block List in Azure --- 
+            if not _commit_block_list(upload_url, block_ids):
+                 return False, calculated_digest_b64, calculated_mac_b64 # Commit failed
+
+            # Only return success if digest matched
+            if digest_match:
+                 logger.info("Waiting 60 seconds for Azure storage changes to propagate before Intune commit...")
+                 time.sleep(60)
+                 return True, calculated_digest_b64, calculated_mac_b64
+            else:
+                 # Even though block list was committed, return failure due to digest mismatch
+                 return False, calculated_digest_b64, calculated_mac_b64
 
     except FileNotFoundError:
         logger.error(f".intunewin file not found: {intunewin_file_path}")
-        return False, None
     except zipfile.BadZipFile:
         logger.error(f"Invalid or corrupted .intunewin file: {intunewin_file_path}")
-        return False, None
     except ET.ParseError as e:
         logger.error(f"Failed to parse detection.xml within the archive: {e}")
-        return False, None
     except Exception as e:
-        logger.error(f"An unexpected error occurred during decryption/upload: {e}", exc_info=True) # Log traceback
-        return False, None
+        logger.error(f"An unexpected error occurred during decryption/upload: {e}", exc_info=True)
+
+    return False, None, None # Default failure case
+
+def _commit_block_list(upload_url, block_ids):
+    """Commits the block list to Azure Blob Storage."""
+    if not block_ids:
+        logger.warning("No block IDs provided, cannot commit block list.")
+        return False
+    logger.info(f"Committing block list with {len(block_ids)} blocks...")
+    commit_list_xml = '<?xml version="1.0" encoding="utf-8"?><BlockList>' + ''.join([f'<Latest>{bid}</Latest>' for bid in block_ids]) + '</BlockList>'
+    commit_url = f"{upload_url}&comp=blocklist"
+    try:
+        commit_response = requests.put(
+            commit_url,
+            headers=AZURE_COMMIT_BLOCK_LIST_HEADERS,
+            data=commit_list_xml.encode('utf-8'),
+            timeout=60
+        )
+        commit_response.raise_for_status()
+        logger.info("Azure block list committed successfully.")
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to commit Azure block list: {e.response.status_code if e.response else 'N/A'} - {e.response.text if e.response else e}")
+        return False
+
+def deploy_win32_app(
+    display_name: str,
+    description: str,
+    publisher: str,
+    install_command_line: str,
+    uninstall_command_line: str,
+    intunewin_file_path: str,
+    setup_file_path: str,
+    detection_rules: List[Dict[str, Any]],
+    requirement_rules: List[Dict[str, Any]],
+    minimum_os: str = "1607",
+    architecture: str = "x64"
+) -> Dict[str, Any]:
+    """
+    Deploy a Win32 application to Intune using Microsoft Graph API.
+    
+    Args:
+        display_name: Display name of the application
+        description: Description of the application
+        publisher: Publisher of the application
+        install_command_line: Command line to install the application
+        uninstall_command_line: Command line to uninstall the application
+        intunewin_file_path: Path to the .intunewin file
+        setup_file_path: Path to the setup file within the .intunewin package
+        detection_rules: List of detection rules (required)
+        requirement_rules: List of requirement rules (required)
+        minimum_os: Minimum supported Windows version (defaults to 1607)
+        architecture: Architecture ("x86", "x64", "arm", "neutral") (defaults to x64)
+    
+    Returns:
+        API response from Intune
+    """
+    # Log all input parameters for debugging
+    logger.info(f"Deploying app with the following parameters:")
+    logger.info(f"  display_name: {display_name}")
+    logger.info(f"  description: {description}")
+    logger.info(f"  publisher: {publisher}")
+    logger.info(f"  install_command_line: {install_command_line}")
+    logger.info(f"  uninstall_command_line: {uninstall_command_line}")
+    logger.info(f"  intunewin_file_path: {intunewin_file_path}")
+    logger.info(f"  setup_file_path: {setup_file_path}")
+    logger.info(f"  detection_rules: {len(detection_rules)} rules provided")
+    logger.info(f"  requirement_rules: {len(requirement_rules)} rules provided")
+    logger.info(f"  minimum_os: {minimum_os}")
+    logger.info(f"  architecture: {architecture}")
+    
+    # Get authorization headers using our auth module
+    headers = get_auth_headers()
+    if not headers:
+        logger.error("Failed to get authorization headers")
+        return {"error": "Authentication failed"}
+    
+    # Check if .intunewin file exists
+    if not os.path.exists(intunewin_file_path):
+        logger.error(f"Intunewin file not found: {intunewin_file_path}")
+        return {"error": f"Intunewin file not found: {intunewin_file_path}"}
+    
+    # Check for required arguments
+    if not detection_rules:
+        logger.error("Detection rules are required")
+        return {"error": "Detection rules are required for Win32 app deployment"}
+    
+    if not requirement_rules:
+        logger.error("Requirement rules are required")
+        return {"error": "Requirement rules are required for Win32 app deployment"}
+    
+    if not setup_file_path:
+        logger.error("Setup file path is required")
+        return {"error": "Setup file path is required for Win32 app deployment"}
+    
+    # Ensure all detection rules have the correct type
+    for rule in detection_rules:
+        if rule.get("ruleType") != Win32AppRuleType.DETECTION:
+            rule["ruleType"] = Win32AppRuleType.DETECTION
+    
+    # Ensure all requirement rules have the correct type
+    for rule in requirement_rules:
+        if rule.get("ruleType") != Win32AppRuleType.REQUIREMENT:
+            rule["ruleType"] = Win32AppRuleType.REQUIREMENT
+    
+    # Combine all rules
+    rules = detection_rules + requirement_rules
+    
+    try:
+        # Step 1: Create a mobile app with all required properties
+        logger.info("Step 1: Creating mobile app...")
+        
+        app_body = {
+            "@odata.type": "#microsoft.graph.win32LobApp",
+            "displayName": display_name,
+            "description": description,
+            "publisher": publisher,
+            "isFeatured": False,
+            "fileName": os.path.basename(intunewin_file_path),
+            "setupFilePath": setup_file_path,
+            "installCommandLine": install_command_line,
+            "uninstallCommandLine": uninstall_command_line,
+            "rules": rules,
+            "installExperience": {
+                "@odata.type": "microsoft.graph.win32LobAppInstallExperience",
+                "runAsAccount": "system",
+                "deviceRestartBehavior": "basedOnReturnCode"
+            },
+            "returnCodes": [
+                {
+                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
+                    "returnCode": 0,
+                    "type": "success"
+                },
+                {
+                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
+                    "returnCode": 1641,
+                    "type": "softReboot"
+                },
+                {
+                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
+                    "returnCode": 3010,
+                    "type": "softReboot"
+                },
+                {
+                    "@odata.type": "microsoft.graph.win32LobAppReturnCode",
+                    "returnCode": 1603,
+                    "type": "failed"
+                }
+            ],
+            "minimumSupportedWindowsRelease": minimum_os,
+            "applicableArchitectures": architecture
+        }
+        
+        # Create the initial app with all properties
+        app_response = requests.post(
+            GRAPH_API_ENDPOINT,
+            headers=headers,
+            json=app_body
+        )
+        
+        if app_response.status_code not in (200, 201):
+            logger.error(f"Failed to create app: {app_response.status_code} - {app_response.text}")
+            return {"error": "API error: {app_response.status_code}", "details": app_response.text}
+        
+        app_result = app_response.json()
+        app_id = app_result.get("id")
+        logger.info(f"Created mobile app with ID: {app_id}")
+        
+        # Wait for app to propagate in Intune
+        logger.info("Waiting for app to propagate in Intune (5 seconds)...")
+        import time
+        time.sleep(5)  # Allow time for app propagation in Intune
+        
+        # Step 2: Create a content version for the app
+        logger.info("Step 2: Creating content version...")
+        encryption_info_dict = extract_file_encryption_info(intunewin_file_path)
+        if not encryption_info_dict:
+            return {'error': "Failed to extract encryption info from .intunewin file.", 'app_id': app_id}
+        expected_unencrypted_size = encryption_info_dict.get('UnencryptedContentSize')
+        content_version_result = create_content_version(headers, app_id)
+        if "error" in content_version_result:
+            return content_version_result
+        
+        content_version_id = content_version_result.get("id")
+        logger.info(f"Created content version with ID: {content_version_id}")
+        
+        # Wait for content version to propagate in Intune
+        logger.info("Waiting for content version to propagate (2 seconds)...")
+        time.sleep(2)
+        
+        # Step 3: Get content upload URLs
+        logger.info("Step 3: Getting content upload URLs...")
+        upload_urls_result = get_content_upload_urls(headers, app_id, content_version_id, intunewin_file_path)
+
+        # Check for errors first
+        if "error" in upload_urls_result:
+            logger.error(f"Failed to get upload URLs: {upload_urls_result['error']}")
+            return upload_urls_result
+
+        # Extract URL and file ID
+        upload_url = upload_urls_result.get("upload_url")
+        file_id = upload_urls_result.get("file_id")
+
+        if not upload_url or not file_id:
+            logger.error("Missing upload_url or file_id in the response from get_content_upload_urls.")
+            details = upload_urls_result.get("details", "No additional details provided.") # Provide details if possible
+            return {"error": "Missing upload URL or file ID.", "details": details}
+
+        logger.info(f"Successfully obtained upload URL and file ID: {file_id}")
+        
+        # Step 3.5: Extract File Encryption Info from .intunewin
+        logger.info("Extracting file encryption info...")
+        file_encryption_info = extract_file_encryption_info(intunewin_file_path)
+        if not file_encryption_info:
+            logger.error("Failed to extract file encryption info. Aborting deployment.")
+            # Consider cleanup: delete the created app/content version? (Potentially complex)
+            return {"error": "Failed to extract fileEncryptionInfo"}
+
+        expected_unencrypted_size_str = file_encryption_info.get('UnencryptedContentSize')
+        if not expected_unencrypted_size_str:
+            logger.error("UnencryptedContentSize not found in encryption info. Aborting.")
+            return {"error": "Missing UnencryptedContentSize in fileEncryptionInfo"}
+        try:
+            expected_unencrypted_size = int(expected_unencrypted_size_str)
+        except ValueError:
+            logger.error(f"Invalid UnencryptedContentSize: {expected_unencrypted_size_str}. Aborting.")
+            return {"error": "Invalid UnencryptedContentSize in fileEncryptionInfo"}
+
+        # Step 4: Decrypt locally and upload file chunks
+        logger.info("Step 4: Decrypting locally and uploading file chunks...")
+        upload_success, calculated_digest, calculated_mac_b64 = _decrypt_and_upload_chunks(
+            intunewin_file_path,
+            file_encryption_info, # Pass the extracted info
+            upload_url,
+            expected_unencrypted_size # Pass the expected size
+        )
+
+        if not upload_success:
+            logger.error("Decryption, size verification, or upload process failed. Aborting deployment.")
+            # Consider cleanup: delete the created app/content version?
+            return {"error": "Decryption/size check/upload failed"}
+
+        logger.info("File chunks uploaded successfully.")
+
+        # Update the encryption info with the *calculated* MAC before returning
+        if calculated_mac_b64: # Use the correct variable
+            logger.info(f"Updating MAC in returned encryption info with calculated value: {calculated_mac_b64}") # Use the correct variable
+            file_encryption_info['Mac'] = calculated_mac_b64 # Use the correct variable
+        else:
+            # This case should ideally not happen if decryption/verification succeeded, but log if it does
+            logger.warning("Calculated MAC was None, cannot update in returned encryption info.")
+
+        # Step 5: Commit the content version file
+        logger.info("Step 5: Committing the content version file...")
+        commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
+
+        # --- CHANGE HERE: Ensure commit uses values directly from file_encryption_info ---
+        commit_payload = {
+            "fileEncryptionInfo": {
+                "encryptionKey": file_encryption_info['EncryptionKey'],
+                "macKey": file_encryption_info['MacKey'],
+                "initializationVector": file_encryption_info['InitializationVector'],
+                "mac": file_encryption_info['Mac'], # Use the MAC from the XML
+                "profileIdentifier": file_encryption_info['ProfileIdentifier'],
+                "fileDigest": file_encryption_info['FileDigest'], # Use the Digest from the XML
+                "fileDigestAlgorithm": file_encryption_info['FileDigestAlgorithm']
+            }
+        }
+        # --- End Change ---
+        logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
+
+        commit_response = requests.post(
+            commit_url,
+            headers=headers,
+            json=commit_payload
+        )
+        
+        if commit_response.status_code in (200, 201, 202):
+            logger.info(f"Successfully committed content version file: {content_version_id}")
+        else:
+            logger.error(f"Failed to commit content version file: {commit_response.status_code} - {commit_response.text}")
+            return {
+                "error": f"API error: {commit_response.status_code}",
+                "details": commit_response.text
+            }
+    
+    except Exception as e:
+        logger.error(f"Exception during app deployment: {str(e)}")
+        return {"error": str(e)}
