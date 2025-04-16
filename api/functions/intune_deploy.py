@@ -270,6 +270,11 @@ def deploy_win32_app(
         app_result = app_response.json()
         app_id = app_result.get("id")
         logger.info(f"Created mobile app with ID: {app_id}")
+        logger.debug(f"Create App Response Status: {app_response.status_code}")
+        try:
+            logger.debug(f"Create App Response Body: {app_response.json()}")
+        except requests.exceptions.JSONDecodeError:
+            logger.debug(f"Create App Response Body (non-JSON): {app_response.text}")
 
         # Wait for app to propagate in Intune
         logger.info("Waiting for app to propagate in Intune (5 seconds)...")
@@ -347,245 +352,39 @@ def deploy_win32_app(
 
         logger.info("File chunks uploaded successfully.")
 
-        # Step 5: Commit the content version file (with retries on 404)
-        logger.info("Step 5: Committing the content version file (with retries on 404)...")
-        commit_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
+        # --- Add Delay Before Commit ---
+        delay_before_commit = 10
+        logger.info(f"Waiting {delay_before_commit} seconds before committing file to allow backend processing...")
+        time.sleep(delay_before_commit)
 
-        # --- Verify SAS request status before committing ---
-        logger.info("Verifying SAS request status before committing...")
-        verify_url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}"
+        # Step 5: Commit the content version file
+        logger.info("Step 5: Committing the content version file...")
+        commit_response = commit_content_version(headers, app_id, content_version_id, file_id, file_encryption_info)
 
-        # Poll for SAS request to complete
-        poll_start_time = time.time()
-        poll_timeout_seconds = 180  # 3 minutes
-        poll_delay_seconds = 10
-        sas_success = False
+        if "error" in commit_response:
+            logger.error(f"Failed to commit content version file: {commit_response['error']}")
+            # Optional: Consider deleting the app if commit fails critically
+            # delete_mobile_app(headers, app_id)
+            return {"error": f"Commit failed: {commit_response['error']}"}
+        
+        logger.info(f"Successfully initiated commit for content version file: {content_version_id}")
 
-        while time.time() - poll_start_time < poll_timeout_seconds:
-            try:
-                verify_resp = requests.get(verify_url, headers=headers, timeout=60)
-                if verify_resp.status_code == 200:
-                    verify_json = verify_resp.json()
-                    upload_state = verify_json.get("uploadState")
-                    logger.info(f"Current uploadState: '{upload_state}' (polling for {time.time() - poll_start_time:.1f} seconds)")
-
-                    # Check for the correct state as indicated in the error message
-                    # The error says "File commit can not be started until status for SAS request or renewal has transitioned to 'Success'"
-                    if upload_state == "azureStorageUriRequestSuccess" or upload_state == "uploadSuccess":
-                        logger.info(f"SAS request completed successfully with state '{upload_state}'. Proceeding with commit.")
-                        sas_success = True
-                        break
-                else:
-                    logger.warning(f"Failed to check SAS request status: {verify_resp.status_code} - {verify_resp.text}")
-            except Exception as e:
-                logger.warning(f"Error checking SAS request status: {str(e)}")
-
-            time.sleep(poll_delay_seconds)
-
-        if not sas_success:
-            logger.warning(f"SAS request did not complete within {poll_timeout_seconds} seconds. Proceeding with commit anyway.")
-
-        # We should commit the file first, then the content version
-        # Attempting to commit the content version before the file is committed will fail
-        logger.info("Proceeding with file commit first, then content version...")
-
-        # --- Map PascalCase from XML/upload function to camelCase for API ---
-        # IMPORTANT: We must use the exact values from the detection.xml file
-        # The MAC and FileDigest values are especially critical
-        # According to the documentation, we need to provide the fileEncryptionInfo exactly as specified
-        commit_payload = {
-            "fileEncryptionInfo": {
-                "encryptionKey": file_encryption_info['EncryptionKey'],
-                "macKey": file_encryption_info['MacKey'],
-                "initializationVector": file_encryption_info['InitializationVector'],
-                "mac": file_encryption_info['Mac'], # Use the MAC from the XML
-                "profileIdentifier": file_encryption_info['ProfileIdentifier'],
-                "fileDigest": file_encryption_info['FileDigest'], # Use the Digest from the XML
-                "fileDigestAlgorithm": file_encryption_info['FileDigestAlgorithm']
-            }
-        }
-
-        # Log the exact payload we're sending
-        logger.info("Commit payload (fileEncryptionInfo):\n" +
-                   f"  encryptionKey: {file_encryption_info['EncryptionKey']}\n" +
-                   f"  macKey: {file_encryption_info['MacKey']}\n" +
-                   f"  initializationVector: {file_encryption_info['InitializationVector']}\n" +
-                   f"  mac: {file_encryption_info['Mac']}\n" +
-                   f"  profileIdentifier: {file_encryption_info['ProfileIdentifier']}\n" +
-                   f"  fileDigest: {file_encryption_info['FileDigest']}\n" +
-                   f"  fileDigestAlgorithm: {file_encryption_info['FileDigestAlgorithm']}")
-        # --- End Change ---
-
-        max_retries = 3
-        retry_delay = 30 # seconds
-        commit_success = False
-        for attempt in range(max_retries):
-            logger.info(f"Commit attempt {attempt + 1}/{max_retries}...")
-            logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
-            try:
-                # Add Content-Type header to ensure proper JSON formatting
-                commit_headers = headers.copy()
-                commit_headers['Content-Type'] = 'application/json'
-
-                # Log the full request details
-                logger.info(f"Commit URL: {commit_url}")
-                logger.info(f"Commit Headers: {commit_headers}")
-                logger.info(f"Commit Payload: {json.dumps(commit_payload)}")
-
-                commit_response = requests.post(commit_url, headers=commit_headers, json=commit_payload, timeout=60)
-
-                # Log the response details
-                logger.info(f"Commit Response Status: {commit_response.status_code}")
-                logger.info(f"Commit Response Headers: {dict(commit_response.headers)}")
-                logger.info(f"Commit Response Body: {commit_response.text if commit_response.text else 'Empty'}")
-
-                if commit_response.status_code == 204 or commit_response.status_code == 200:
-                    commit_success = True
-                    logger.info(f"Successfully committed content version file: {content_version_id}")
-                    break # Exit retry loop on success
-                elif commit_response.status_code == 404:
-                    logger.warning(f"Commit attempt {attempt + 1} failed with 404 (ResourceNotFound). Retrying...")
-                else:
-                    # Unexpected error, log and break
-                    logger.error(f"Commit attempt {attempt + 1} failed with unexpected status {commit_response.status_code}: {commit_response.text}")
-                    break # Exit loop on non-404 error
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Commit attempt {attempt + 1} failed with network error: {e}")
-                # Consider if retry is appropriate for network errors, for now we break
-                break
-
-            if attempt < max_retries - 1: # Don't sleep after the last attempt
-                 time.sleep(retry_delay)
-
-        if not commit_success:
-            logger.error(f"Failed to commit content version file after {max_retries} attempts.")
-            # Use the last response if available, otherwise provide a generic error
-            error_details = commit_response.text if 'commit_response' in locals() and commit_response else "Retries exhausted"
-            status_code = commit_response.status_code if 'commit_response' in locals() and commit_response else "N/A"
+        # --- Step 6: Poll for File Commit Completion --- 
+        logger.info("Step 6: Polling for file commit completion...")
+        if not _poll_for_file_commit(headers, app_id, content_version_id, file_id):
+            logger.error("File commit polling timed out or failed permanently.")
+            # Although polling failed, the app might still eventually process. 
+            # We return the app ID but warn the user.
             return {
-                "error": f"API error during commit: {status_code}",
-                "details": error_details
+                "app_id": app_id,
+                "warning": "File commit polling failed. The app might be stuck or delayed in processing."
             }
-        # --- Post‑commit verification: ensure Intune shows the file as fully committed ---
-        verify_url = (
-            f"{GRAPH_API_ENDPOINT}/{app_id}"
-            f"/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}"
-        )
-        try:
-            verify_resp = requests.get(verify_url, headers=headers, timeout=60)
-            if verify_resp.status_code == 200:
-                verify_json = verify_resp.json()
-                upload_state = verify_json.get("uploadState")
-                is_committed_flag = verify_json.get("isCommitted")
-                logger.info(
-                    "Post‑commit verification: uploadState='%s', isCommitted=%s",
-                    upload_state,
-                    is_committed_flag,
-                )
-                if upload_state != "commitFileSuccess" or not is_committed_flag:
-                    logger.warning(
-                        "File commit accepted, but backend state is '%s'. "
-                        "Publishing may be delayed until Intune finishes processing.",
-                        upload_state,
-                    )
 
-                    # If the state is 'commitFileFailed', we need to retry the commit
-                    if upload_state == "commitFileFailed":
-                        logger.warning("Detected 'commitFileFailed' state. Attempting to retry the commit...")
-                        # Retry the commit with the same payload
-                        retry_commit_success = False
-                        for retry_attempt in range(3):
-                            logger.info(f"Retry commit attempt {retry_attempt + 1}/3...")
-                            try:
-                                # Use the same enhanced headers for retry
-                                retry_commit_response = requests.post(commit_url, headers=commit_headers, json=commit_payload, timeout=60)
-                                logger.info(f"Retry Commit Response Status: {retry_commit_response.status_code}")
-                                logger.info(f"Retry Commit Response Body: {retry_commit_response.text if retry_commit_response.text else 'Empty'}")
-                                if retry_commit_response.status_code in (200, 204):
-                                    logger.info(f"Retry commit attempt {retry_attempt + 1} succeeded with status code {retry_commit_response.status_code}")
-                                    retry_commit_success = True
-                                    break
-                                else:
-                                    logger.warning(f"Retry commit attempt {retry_attempt + 1} failed with status code {retry_commit_response.status_code}")
-                            except Exception as e:
-                                logger.warning(f"Retry commit attempt {retry_attempt + 1} failed with exception: {str(e)}")
-                            time.sleep(30)  # Wait between retry attempts
+        logger.info("File commit polling successful.")
 
-                        if retry_commit_success:
-                            logger.info("Successfully retried the commit. Proceeding with polling...")
-                        else:
-                            logger.warning("Failed to retry the commit. Will still attempt to poll for completion...")
-
-                        # Try to commit the content version after file commit attempts
-                        logger.info("File commit failed. Waiting 30 seconds before attempting to commit the content version...")
-                        time.sleep(30)  # Wait for any backend processing to complete
-
-                        logger.info("Attempting to commit the content version...")
-                        commit_content_version_result = commit_content_version(headers, app_id, content_version_id)
-                        if "error" not in commit_content_version_result:
-                            logger.info("Successfully committed content version.")
-
-                            # Since we successfully committed the content version, we can proceed with the app update
-                            # even if the file commit failed
-                            logger.info("Content version committed successfully. Proceeding with app update despite file commit failure.")
-                            return True
-                        else:
-                            logger.warning(f"Failed to commit content version: {commit_content_version_result.get('error')}")
-
-                    # Poll for file commit status until isCommitted=True
-                    logger.info("Polling for file commitment before proceeding...")
-                    commit_wait_success = _poll_for_file_commit(headers, app_id, content_version_id, file_id)
-
-                    if not commit_wait_success:
-                        logger.warning(f"File {file_id} was not committed within the timeout period.")
-
-                        # Check if the app is in a usable state despite the commit failure
-                        logger.info("Checking if the app is in a usable state despite commit failure...")
-                        app_details = _get_app_details(headers, app_id)
-
-                        if "error" not in app_details:
-                            current_state = app_details.get("publishingState")
-                            logger.info(f"App is in state: {current_state}")
-
-                            if current_state in ["processing", "published"]:
-                                logger.info("App appears to be in a valid state. Proceeding with deployment.")
-                                # Force the content version to be committed
-                                logger.info("Attempting to force commit the content version...")
-                                commit_content_version_result = commit_content_version(headers, app_id, content_version_id)
-                                if "error" not in commit_content_version_result:
-                                    logger.info("Successfully forced content version commit.")
-                                    return True  # Consider this a success and proceed
-                                else:
-                                    logger.warning(f"Failed to force content version commit: {commit_content_version_result.get('error')}")
-                            else:
-                                logger.error(f"App is in an invalid state: {current_state}. Proceeding with caution.")
-                        else:
-                            logger.error(f"Failed to get app details: {app_details.get('error')}. Proceeding with caution.")
-
-                        # We'll still try to continue, but note that the app may not be fully ready
-            else:
-                logger.warning(
-                    "Post‑commit verification failed: %s - %s",
-                    verify_resp.status_code,
-                    verify_resp.text,
-                )
-        except requests.exceptions.RequestException as e:
-            logger.warning("Post‑commit verification encountered network error: %s", e)
-
-        # --- ADDED Polling for Published State ---
-        logger.info("Polling for application publishing state before final update...")
-        published_wait_success = _poll_for_app_published_state(headers, app_id)
-        if not published_wait_success:
-            logger.error(f"Application {app_id} did not reach 'Published' state within the timeout. Aborting final update.")
-            # Return partial success info as commit worked, but update couldn't proceed
-            # Consider returning the app details retrieved during polling if available
-            return {"id": app_id, "display_name": display_name, "@odata.type": "#microsoft.graph.win32LobApp", "status": "commit_success_publish_timeout"}
-        logger.info("Application is in 'Published' state. Proceeding with final update.")
-        # --- End Polling ---
-
-        # --- ADDED STEP 6 ---
+        # --- Step 7: Final App Configuration (Optional - Add if needed) ---
         # Step 6: Update the application with remaining details (Install/Uninstall commands, rules)
-        logger.info("Step 6: Updating application details...")
+        logger.info("Step 7: Updating application details...")
         update_url = f"{GRAPH_API_ENDPOINT}/{app_id}"
         update_payload = {
             "@odata.type": "#microsoft.graph.win32LobApp",
@@ -679,7 +478,7 @@ def _get_app_details(headers: Dict[str, str], app_id: str) -> Dict[str, Any]:
         logger.error(f"Exception getting app details: {str(e)}")
         return {"error": str(e)}
 
-def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str) -> Dict[str, Any]:
+def commit_content_version(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str, encryption_info: Dict[str, str]) -> Dict[str, Any]:
     """
     Commit a content version for an app.
 
@@ -687,32 +486,101 @@ def commit_content_version(headers: Dict[str, str], app_id: str, content_version
         headers: Authorization headers
         app_id: ID of the application
         content_version_id: ID of the content version to commit
+        file_id: ID of the file to commit
+        encryption_info: Dictionary containing encryption information from detection.xml
 
     Returns:
         API response from content version commit
     """
     # The correct URL for committing a content version
-    url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/commit"
+    url = f"{GRAPH_API_ENDPOINT}/{app_id}/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}/commit"
 
     logger.info(f"Committing content version with URL: {url}")
 
     try:
         # Commit the content version
-        response = requests.post(
-            url,
-            headers=headers,
-            json={}
-        )
-
-        if response.status_code in (200, 201, 204):
-            logger.info(f"Successfully committed content version {content_version_id}")
-            return {"status": "success", "content_version_id": content_version_id}
-        else:
-            logger.error(f"Failed to commit content version: {response.status_code} - {response.text}")
-            return {
-                "error": f"API error: {response.status_code}",
-                "details": response.text
+        commit_payload = {
+            "fileEncryptionInfo": {
+                "encryptionKey": encryption_info['EncryptionKey'],
+                "macKey": encryption_info['MacKey'],
+                "initializationVector": encryption_info['InitializationVector'],
+                "mac": encryption_info['Mac'], # Use the MAC from the XML
+                "profileIdentifier": encryption_info['ProfileIdentifier'],
+                "fileDigest": encryption_info['FileDigest'], # Use the Digest from the XML
+                "fileDigestAlgorithm": encryption_info['FileDigestAlgorithm']
             }
+        }
+
+        # Log the exact payload we're sending
+        logger.info("Commit payload (fileEncryptionInfo):\n" +
+                   f"  encryptionKey: {encryption_info['EncryptionKey']}\n" +
+                   f"  macKey: {encryption_info['MacKey']}\n" +
+                   f"  initializationVector: {encryption_info['InitializationVector']}\n" +
+                   f"  mac: {encryption_info['Mac']}\n" +
+                   f"  profileIdentifier: {encryption_info['ProfileIdentifier']}\n" +
+                   f"  fileDigest: {encryption_info['FileDigest']}\n" +
+                   f"  fileDigestAlgorithm: {encryption_info['FileDigestAlgorithm']}")
+        # --- End Change ---
+
+        max_retries = 3
+        retry_delay = 30 # seconds
+        commit_success = False
+        for attempt in range(max_retries):
+            logger.info(f"Commit attempt {attempt + 1}/{max_retries}...")
+            logger.debug(f"Commit Payload: {json.dumps(commit_payload, indent=2)}")
+            try:
+                # Add Content-Type header to ensure proper JSON formatting
+                commit_headers = headers.copy()
+                commit_headers['Content-Type'] = 'application/json'
+
+                # Log the full request details immediately before sending
+                logger.info("--- Preparing to send Commit request ---")
+                logger.info(f"Commit URL: {url}")
+                logger.info(f"Commit Headers: {json.dumps(commit_headers, indent=2)}")
+                logger.info(f"Commit Payload (JSON): {json.dumps(commit_payload, indent=2)}")
+                logger.info("--- Sending Commit request ---")
+
+                commit_response = requests.post(url, headers=commit_headers, json=commit_payload, timeout=60)
+
+                # Log the response details
+                logger.info(f"Commit Response Status: {commit_response.status_code}")
+                logger.info(f"Commit Response Headers: {dict(commit_response.headers)}")
+                try:
+                    logger.info(f"Commit Response Body JSON: {commit_response.json()}")
+                except requests.exceptions.JSONDecodeError:
+                    logger.info(f"Commit Response Body (non-JSON): {commit_response.text if commit_response.text else 'Empty'}")
+
+                if commit_response.status_code == 204 or commit_response.status_code == 200:
+                    commit_success = True
+                    logger.info(f"Successfully committed content version file: {content_version_id}")
+                    break # Exit retry loop on success
+                elif commit_response.status_code == 404:
+                    logger.warning(f"Commit attempt {attempt + 1} failed with 404 (ResourceNotFound). Retrying...")
+                else:
+                    # Unexpected error, log and break
+                    logger.error(f"Commit attempt {attempt + 1} failed with unexpected status {commit_response.status_code}: {commit_response.text}")
+                    break # Exit loop on non-404 error
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Commit attempt {attempt + 1} failed with network error: {e}")
+                # Consider if retry is appropriate for network errors, for now we break
+                break
+
+            if attempt < max_retries - 1: # Don't sleep after the last attempt
+                 time.sleep(retry_delay)
+
+        if not commit_success:
+            logger.error(f"Failed to commit content version file after {max_retries} attempts.")
+            # Use the last response if available, otherwise provide a generic error
+            error_details = commit_response.text if 'commit_response' in locals() and commit_response else "Retries exhausted"
+            status_code = commit_response.status_code if 'commit_response' in locals() and commit_response else "N/A"
+            return {
+                "error": f"API error during commit: {status_code}",
+                "details": error_details
+            }
+        # --- Post‑commit verification: ensure Intune shows the file as fully committed ---
+        # Removed post-commit verification and retry logic
+        return {"status": "success", "content_version_id": content_version_id}
+
     except Exception as e:
         logger.error(f"Exception during content version commit: {str(e)}")
         return {"error": str(e)}
@@ -894,6 +762,7 @@ def poll_for_upload_url(headers: Dict[str, str], app_id: str, content_version_id
         sas_uri = file_status_result.get("azureStorageUri")
 
         logger.debug(f"Polling attempt {attempt + 1}: State='{upload_state}', SAS URI Present={bool(sas_uri)}")
+        logger.debug(f"Poll URL attempt {attempt + 1} Response Body: {file_status_result}") # Log full response
 
         # Primary check: Is the SAS URI available?
         if sas_uri:
@@ -1354,7 +1223,7 @@ def _poll_for_app_published_state(headers: Dict[str, str], app_id: str, timeout_
 
 # Polls the file commit status until isCommitted=True or timeout is reached
 def _poll_for_file_commit(headers: Dict[str, str], app_id: str, content_version_id: str, file_id: str,
-                         timeout_minutes: int = 3, delay_seconds: int = 15) -> bool:
+                         timeout_minutes: int = 10, delay_seconds: int = 15) -> bool:
     """
     Poll for file commit status until isCommitted=True or timeout is reached.
 
@@ -1388,52 +1257,117 @@ def _poll_for_file_commit(headers: Dict[str, str], app_id: str, content_version_
 
         try:
             response = requests.get(url, headers=headers, timeout=60)
-
-            if response.status_code == 200:
-                result = response.json()
-                upload_state = result.get("uploadState")
-                is_committed = result.get("isCommitted")
-
-                logger.info(f"File commit status check: uploadState='{upload_state}', isCommitted={is_committed}")
-
-                # If the file is committed, we're done
-                if is_committed is True:
-                    logger.info(f"File successfully committed after {elapsed_seconds:.1f} seconds.")
-                    return True
-
-                # If upload state indicates a failure, log it but continue polling
-                if "fail" in upload_state.lower():
-                    logger.warning(f"File commit appears to have issues (state: '{upload_state}'), but will continue polling...")
-
-                # Check for specific states that might indicate success despite not being marked as committed
-                if upload_state == "commitFileSuccess" and not is_committed:
-                    logger.info("State is 'commitFileSuccess' but isCommitted is False. This may be a delay in state propagation.")
-
-                # If we've been polling for more than 3 minutes and still see 'commitFileFailed',
-                # it might be stuck in this state but actually be usable
-                if elapsed_seconds > 180 and upload_state == "commitFileFailed":
-                    logger.warning("File has been in 'commitFileFailed' state for over 3 minutes.")
-                    logger.warning("This may be a false negative. Will check if the app is actually usable...")
-
-                    # Check if the app is in a usable state despite the commit failure
-                    app_details = _get_app_details(headers, app_id)
-                    if "error" not in app_details:
-                        current_state = app_details.get("publishingState")
-                        logger.info(f"App is in state: {current_state}")
-
-                        if current_state in ["processing", "published"]:
-                            logger.info("App appears to be in a valid state despite commit failure. Considering this a success.")
-                            return True
-                        else:
-                            logger.warning(f"App is in state '{current_state}' which may not be valid. Continuing to poll.")
-                    else:
-                        logger.warning(f"Failed to get app details: {app_details.get('error')}. Continuing to poll.")
+            if response.ok:
+                try:
+                    file_status = response.json()
+                    logger.debug(f"Polling commit status - Response Body: {json.dumps(file_status)}") # Log full JSON
+                    upload_state = file_status.get("uploadState")
+                    is_committed = file_status.get("isCommitted")
+                except requests.exceptions.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON response during polling: {response.text}")
+                    continue
             else:
-                logger.warning(f"Failed to get file status: {response.status_code} - {response.text}")
+                logger.warning(
+                    "Failed to get file status: %s - %s",
+                    response.status_code,
+                    response.text,
+                )
+                continue
 
+            logger.info(f"File commit status check: uploadState='{upload_state}', isCommitted={is_committed}")
+
+            # If the file is committed, we're done
+            if is_committed is True:
+                logger.info(f"File successfully committed after {elapsed_seconds:.1f} seconds.")
+                return True
+
+            # If upload state indicates a failure, log it but continue polling
+            if "fail" in upload_state.lower():
+                logger.warning(f"File commit status check shows failure state: uploadState='{upload_state}', isCommitted={is_committed}. Full status: {json.dumps(file_status)}")
+                # Continue polling as it might be transient
+
+            # Check for specific states that might indicate success despite not being marked as committed
+            if upload_state == "commitFileSuccess" and not is_committed:
+                logger.info("State is 'commitFileSuccess' but isCommitted is False. This may be a delay in state propagation.")
+
+            # If we've been polling for more than 3 minutes and still see 'commitFileFailed',
+            # it might be stuck in this state but actually be usable
+            if elapsed_seconds > 180 and upload_state == "commitFileFailed":
+                logger.warning("File has been in 'commitFileFailed' state for over 3 minutes.")
+                logger.warning("This may be a false negative. Will check if the app is actually usable...")
+
+                # Check if the app is in a usable state despite the commit failure
+                app_details = _get_app_details(headers, app_id)
+                if "error" not in app_details:
+                    current_state = app_details.get("publishingState")
+                    logger.info(f"App is in state: {current_state}")
+
+                    if current_state in ["processing", "published"]:
+                        logger.info("App appears to be in a valid state. Proceeding with deployment.")
+                        # Force the content version to be committed
+                        logger.info("Attempting to force commit the content version...")
+                        commit_content_version_result = commit_content_version(headers, app_id, content_version_id)
+                        if "error" not in commit_content_version_result:
+                            logger.info("Successfully forced content version commit.")
+                            return True  # Consider this a success and proceed
+                        else:
+                            logger.warning(f"Failed to force content version commit: {commit_content_version_result.get('error')}")
+                    else:
+                        logger.error(f"App is in an invalid state: {current_state}. Proceeding with caution.")
+                else:
+                    logger.error(f"Failed to get app details: {app_details.get('error')}. Proceeding with caution.")
+
+                # We'll still try to continue, but note that the app may not be fully ready
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Network error during file commit polling: {e}")
+            logger.warning("Network error during file commit polling: %s", e)
 
         # Wait before trying again
         logger.debug(f"Waiting {delay_seconds} seconds before next commit status check...")
         time.sleep(delay_seconds)
+
+def create_content_file(
+    headers: Dict[str, str],
+    app_id: str,
+    content_version_id: str,
+    file_id: str,
+    file_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Create a content file for an app.
+
+    Args:
+        headers: Authorization headers
+        app_id: ID of the application
+        content_version_id: ID of the content version
+        file_id: ID of the file
+        file_data: Dictionary containing file data
+
+    Returns:
+        API response from content file creation
+    """
+    content_file_url = (
+        f"{GRAPH_API_ENDPOINT}/{app_id}"
+        f"/microsoft.graph.win32LobApp/contentVersions/{content_version_id}/files/{file_id}"
+    )
+
+    logger.info(f"Creating content file with URL: {content_file_url}")
+
+    try:
+        # Create the content file
+        response = requests.post(
+            content_file_url,
+            headers=headers,
+            json=file_data
+        )
+
+        logger.debug(f"Create Content File Response Status: {response.status_code}")
+        try:
+            logger.debug(f"Create Content File Response Body: {response.json()}")
+        except requests.exceptions.JSONDecodeError:
+            logger.debug(f"Create Content File Response Body (non-JSON): {response.text}")
+
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Exception during content file creation: {str(e)}")
+        return {"error": str(e)}
