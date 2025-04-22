@@ -11,6 +11,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
+
 import math
 import os
 import time
@@ -26,6 +28,12 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from api.functions.auth import get_auth_headers  # your existing helper
 
 
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    # default to INFO level if the parent application hasn't configured logging
+    logging.basicConfig(level=logging.INFO)
+
+
 GRAPH_BASE = "https://graph.microsoft.com/beta"  # use v1.0 if you prefer
 
 
@@ -33,7 +41,7 @@ GRAPH_BASE = "https://graph.microsoft.com/beta"  # use v1.0 if you prefer
 # 1.  ── helper: read metadata & decrypt payload inside the .intunewin
 # --------------------------------------------------------------------------------------
 def _parse_detection_xml(intunewin: Path) -> Tuple[Dict, Path]:
-    """Return encryption metadata + path to decrypted payload ZIP."""
+    """Return encryption metadata + path to the *encrypted* payload file."""
     with zipfile.ZipFile(intunewin) as zf:
         with zf.open("IntuneWinPackage/Metadata/Detection.xml") as f:
             root = ET.parse(f).getroot()
@@ -59,24 +67,7 @@ def _parse_detection_xml(intunewin: Path) -> Tuple[Dict, Path]:
             f"IntuneWinPackage/Contents/{meta['file_name']}",
             path=intunewin.parent,
         )
-    # decrypt to <package>.decoded
-    decrypted_path = intunewin.with_suffix(".decoded")
-    _decrypt_file(
-        Path(encrypted_blob),
-        decrypted_path,
-        base64.b64decode(meta["encryption_key"]),
-        base64.b64decode(meta["iv"]),
-    )
-
-    # compute digest if missing
-    if not meta["file_digest"]:
-        h = hashlib.sha256()
-        with open(decrypted_path, "rb") as fh:
-            for chunk in iter(lambda: fh.read(2 << 20), b""):
-                h.update(chunk)
-        meta["file_digest"] = base64.b64encode(h.digest()).decode()
-
-    return meta, decrypted_path
+    return meta, Path(encrypted_blob)
 
 
 def _decrypt_file(src: Path, dst: Path, key: bytes, iv: bytes) -> None:
@@ -97,7 +88,15 @@ def _decrypt_file(src: Path, dst: Path, key: bytes, iv: bytes) -> None:
 def _graph_request(method: str, url: str, **kwargs):
     headers = get_auth_headers()
     headers.update(kwargs.pop("headers", {}))
+    logger.debug("GRAPH %s %s", method, url)
+    if 'json' in kwargs and kwargs['json'] is not None:
+        try:
+            logger.debug("Payload: %s", json.dumps(kwargs['json'])[:1000])
+        except Exception:
+            pass
     resp = requests.request(method, url, headers=headers, **kwargs)
+    logger.debug("Response status: %s", resp.status_code)
+    logger.debug("Response snippet: %s", resp.text[:500])
     try:
         resp.raise_for_status()
     except requests.HTTPError as exc:
@@ -149,12 +148,12 @@ def _create_content_version(app_id: str) -> str:
     return result["id"]
 
 
-def _create_file_placeholder(app_id: str, version_id: str, meta: Dict) -> Dict:
+def _create_file_placeholder(app_id: str, version_id: str, meta: Dict, encrypted_path: Path) -> Dict:
     body = {
         "@odata.type": "#microsoft.graph.mobileAppContentFile",
         "name": meta["file_name"],
         "size": meta["unencrypted_size"],
-        "sizeEncrypted": os.path.getsize(meta["file_name"]) if os.path.exists(meta["file_name"]) else meta["unencrypted_size"],
+        "sizeEncrypted": os.path.getsize(encrypted_path),
         "isDependency": False,
     }
     return _graph_request(
@@ -177,6 +176,7 @@ def _wait_for_storage_uri(app_id: str, version_id: str, file_id: str, timeout=30
 
 
 def _commit_file(app_id: str, version_id: str, file_id: str, meta: Dict):
+    logger.info("Committing file to Intune...")
     body = {
         "fileEncryptionInfo": {
             "@odata.type": "microsoft.graph.fileEncryptionInfo",
@@ -200,9 +200,21 @@ def _commit_file(app_id: str, version_id: str, file_id: str, meta: Dict):
 def _wait_for_commit(app_id: str, version_id: str, file_id: str, timeout=600):
     url = (f"{GRAPH_BASE}/deviceAppManagement/mobileApps/{app_id}"
            f"/microsoft.graph.win32LobApp/contentVersions/{version_id}/files/{file_id}")
+    logger.info("Waiting for Intune to finish processing the file commit...")
     for _ in range(timeout // 10):
         data = _graph_request("GET", url)
+        # Verbose progress logging
+        logger.info(
+            "Commit poll → isCommitted=%s  uploadState=%s  size=%s",
+            data.get("isCommitted"),
+            data.get("uploadState", "n/a"),
+            data.get("size")
+        )
+        logger.debug("Full commit poll payload: %s", json.dumps(data)[:1000])
+        if data.get("uploadState") == "commitFileFailed":
+            raise RuntimeError(f"Intune reported commit failure: {json.dumps(data)[:1000]}")
         if data.get("isCommitted"):
+            logger.info("File commit completed!")
             return
         time.sleep(10)
     raise TimeoutError("Timed out waiting for file commit")
@@ -211,11 +223,12 @@ def _wait_for_commit(app_id: str, version_id: str, file_id: str, timeout=600):
 # --------------------------------------------------------------------------------------
 # 3.  ── upload helper (Azure BlockBlob over raw HTTP – no SDK dependency)
 # --------------------------------------------------------------------------------------
-def _upload_to_blob(decrypted_file: Path, sas_uri: str, block_size=4 * 1024 * 1024):
-    total = os.path.getsize(decrypted_file)
+def _upload_to_blob(payload_file: Path, sas_uri: str, block_size=4 * 1024 * 1024):
+    total = os.path.getsize(payload_file)
     blocks = []
 
-    with open(decrypted_file, "rb") as fh:
+    logger.info("Uploading decrypted payload to Azure Blob (%s bytes)...", total)
+    with open(payload_file, "rb") as fh:
         idx = 0
         while chunk := fh.read(block_size):
             block_id = base64.b64encode(f"{idx:05}".encode()).decode()
@@ -223,6 +236,7 @@ def _upload_to_blob(decrypted_file: Path, sas_uri: str, block_size=4 * 1024 * 10
             requests.put(sas_uri, params=params, data=chunk).raise_for_status()
             blocks.append(block_id)
             idx += 1
+    logger.info("Upload complete, committing block list...")
 
     # commit the block list
     block_list_xml = (
@@ -249,15 +263,20 @@ def upload_intunewin(
     -------
     The new mobileApp (Win32 LOB) ID.
     """
+    logger.info("Starting Win32 upload: %s → '%s'", path, display_name)
     intunewin = Path(path).expanduser().resolve()
-    meta, decrypted = _parse_detection_xml(intunewin)
+    meta, encrypted = _parse_detection_xml(intunewin)
 
     app_id = _create_app_shell(display_name, publisher or "Unknown", meta["file_name"])
+    logger.info("Created app shell. ID: %s", app_id)
     version_id = _create_content_version(app_id)
-    ph = _create_file_placeholder(app_id, version_id, meta)
+    logger.info("Created content version: %s", version_id)
+    ph = _create_file_placeholder(app_id, version_id, meta, encrypted)
+    logger.info("Placeholder file created: %s", ph["id"])
     ph = _wait_for_storage_uri(app_id, version_id, ph["id"])
-    _upload_to_blob(decrypted, ph["azureStorageUri"])
+    _upload_to_blob(encrypted, ph["azureStorageUri"])
     _commit_file(app_id, version_id, ph["id"], meta)
     _wait_for_commit(app_id, version_id, ph["id"])
 
+    logger.info("Upload finished successfully. App ID: %s", app_id)
     return app_id
