@@ -92,21 +92,32 @@ function startNextDevServer() {
       }
     });
     
+    // Handle early exit with error
+    nextProcess.on('exit', (code) => {
+      if (code !== 0 && !serverStarted) {
+        console.error(`Next.js process exited with code ${code} before starting.`);
+        reject(new Error(`Next.js process exited with code ${code}`));
+      }
+    });
+    
     // Handle errors
     nextProcess.on('error', (err) => {
       console.error('Failed to start Next.js server:', err);
       reject(err);
     });
     
-    // Set timeout to resolve anyway if taking too long but seems to be running
+    // Set timeout
     setTimeout(() => {
-      if (!serverStarted && nextProcess && !nextProcess.killed) {
-        console.log('Next.js server taking longer than expected, but proceeding anyway');
-        resolve();
-      } else if (!serverStarted) {
+      if (!serverStarted) {
+        // If timeout reached and server not started, reject
+        console.error('Next.js server failed to start within timeout period');
+        if (nextProcess && !nextProcess.killed) {
+           nextProcess.kill(); // Attempt to kill the lingering process
+        }
         reject(new Error('Failed to start Next.js server within timeout period'));
       }
-    }, 10000);
+      // No need to resolve here anymore, resolve happens on readiness detection
+    }, 15000); // Increased timeout slightly to 15s
   });
 }
 
@@ -494,6 +505,25 @@ ipcMain.handle('get-api-port', () => {
   return apiPort;
 });
 
+// Function to display an error message page
+function showErrorPage(errorMessage) {
+  if (mainWindow) {
+    const errorPagePath = path.join(__dirname, 'error.html');
+    // Simple way: load an error HTML file
+    // You might want to pass the errorMessage via query parameter or IPC
+    mainWindow.loadFile(errorPagePath);
+    // Optionally, send the error message to the page if it's set up to receive it
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow.webContents.send('display-error', errorMessage);
+    });
+  } else {
+    // If window not created yet, maybe create it showing the error
+    // Or log and exit?
+    console.error("Cannot show error page, main window not available.");
+    app.quit();
+  }
+}
+
 // Standard Electron app lifecycle events
 app.whenReady().then(async () => {
   // Load stored state
@@ -507,9 +537,14 @@ app.whenReady().then(async () => {
   if (process.env.NODE_ENV === 'development') {
     try {
       await startNextDevServer();
+      console.log(`Next.js server assumed ready on port: ${nextJsPort}`);
     } catch (error) {
       console.error('Failed to start Next.js server:', error);
-      // Optionally handle error, e.g., show error in the window
+      // Handle error: maybe show error in main window or load fallback
+      // For now, just log and potentially quit or show error window
+      // This prevents trying to load a non-existent URL
+      showErrorPage(`Failed to start frontend server: ${error.message}`);
+      return; // Prevent further execution like createWindow if server failed
     }
   }
   
