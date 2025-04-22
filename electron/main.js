@@ -516,20 +516,32 @@ ipcMain.handle('login', async (event, credentials) => {
 
 // Handle logout
 ipcMain.handle('logout', async () => {
-  store.delete('credentials');
+  console.log('Logout requested, clearing credentials');
+  store.delete('graphCredentials'); // Use correct key name
   store.set('isLoggedIn', false);
   
   // Kill the Python API process if running
   if (pythonProcess) {
+    console.log('Terminating Python API process');
     pythonProcess.kill();
     pythonProcess = null;
     apiStarted = false;
+    apiPort = null; // Reset port
+  }
+  
+  // Also kill the Next.js process if in development mode
+  if (process.env.NODE_ENV === 'development' && nextProcess) {
+    console.log('Terminating Next.js dev server');
+    nextProcess.kill();
+    nextProcess = null;
   }
   
   // Reload app to show login screen
   if (mainWindow) {
+    console.log('Sending show-login event to renderer');
     mainWindow.webContents.send('show-login');
   }
+  
   return { success: true };
 });
 

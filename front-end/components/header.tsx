@@ -9,6 +9,7 @@
 
 import { Bell, HelpCircle, Settings } from "lucide-react"
 import { useTheme } from "next-themes"
+import { useState, useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -28,6 +29,36 @@ import {
 export function Header() {
   // Access the theme context to enable theme switching
   const { setTheme } = useTheme()
+  
+  // State to track if running in Electron
+  const [isElectron, setIsElectron] = useState(false)
+  
+  // Check if running in Electron
+  useEffect(() => {
+    // Check if window.electronAPI exists
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      setIsElectron(true)
+    }
+  }, [])
+  
+  // Handle logout
+  const handleLogout = async () => {
+    if (isElectron && window.electronAPI) {
+      try {
+        console.log("Logging out...")
+        const result = await window.electronAPI.logout()
+        console.log("Logout result:", result)
+        // Redirect logic happens automatically through the main process
+        // which will send a show-login event
+      } catch (error) {
+        console.error("Error during logout:", error)
+        // Handle error if needed
+      }
+    } else {
+      console.warn("Logout attempted outside Electron environment")
+      // Fallback for non-Electron environment if needed
+    }
+  }
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b bg-background px-4 md:px-6">
@@ -106,7 +137,7 @@ export function Header() {
             <DropdownMenuItem>Profile</DropdownMenuItem>
             <DropdownMenuItem>Settings</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Log out</DropdownMenuItem>
+            <DropdownMenuItem onClick={handleLogout}>Log out</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
