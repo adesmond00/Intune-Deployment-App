@@ -351,7 +351,7 @@ async function startPythonApi(portToUse) {
   apiPort = portToUse;
   console.log(`Attempting to start API on port: ${apiPort}`);
 
-  const credentials = store.get('credentials');
+  const credentials = store.get('graphCredentials');
   if (!credentials) {
     console.error('No credentials found. Cannot start API.');
     if (mainWindow) {
@@ -537,8 +537,8 @@ ipcMain.handle('login', async (event, credentials) => {
       return { success: false, message: 'All fields are required' };
     }
 
-    // Store credentials securely
-    store.set('credentials', credentials);
+    // Store credentials securely using the correct key
+    store.set('graphCredentials', credentials); // Use 'graphCredentials'
     store.set('isLoggedIn', true);
 
     console.log('Credentials stored, finding port and starting Python API');
@@ -634,20 +634,7 @@ app.whenReady().then(async () => {
   
   createWindow();
 
-  // Start Python API if logged in
-  if (isLoggedIn && graphCredentials) {
-    console.log('App ready, starting API with stored credentials');
-    try {
-      // Find port *before* starting API
-      const initialApiPort = await findAvailablePort(8000);
-      await startPythonApi(initialApiPort); // Pass the found port
-    } catch (error) {
-      console.error('Failed to find available port or start Python API:', error);
-      // Handle error appropriately, maybe show an error message in the window
-    }
-  } else {
-    console.log('App ready, user not logged in or missing credentials');
-  }
+  console.log('App ready. Waiting for user login to start API.');
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
@@ -661,11 +648,17 @@ app.on('window-all-closed', function () {
 
 // Clean up processes on exit
 app.on('before-quit', () => {
+  console.log('App quitting, cleaning up processes...');
   if (pythonProcess) {
+    console.log('Terminating Python API process...');
     pythonProcess.kill();
+    pythonProcess = null; // Clear the reference
   }
   
   if (nextProcess) {
+    console.log('Terminating Next.js dev server process...');
     nextProcess.kill();
+    nextProcess = null; // Clear the reference
   }
+  console.log('Cleanup complete.');
 });
