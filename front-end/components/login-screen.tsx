@@ -8,6 +8,25 @@ import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 
+// Import ElectronAPI interface from a shared location (if you move this to a shared file later)
+interface ElectronAPI {
+  isElectron: boolean;
+  login: (credentials: { clientId: string; clientSecret: string; tenantId: string }) => Promise<{ success: boolean; message?: string }>;
+  logout: () => Promise<{ success: boolean }>;
+  onApiReady: (callback: (port: number) => void) => void;
+  onApiError: (callback: (message: string) => void) => void;
+  onShowLogin: (callback: () => void) => void;
+  onApiLog: (callback: (message: string) => void) => void;
+  removeAllListeners: (channel: string) => void;
+}
+
+// Extend Window interface to include our custom electronAPI property
+declare global {
+  interface Window {
+    electronAPI?: ElectronAPI;
+  }
+}
+
 /**
  * LoginScreen component for Microsoft Graph API authentication
  * 
@@ -26,11 +45,18 @@ export function LoginScreen() {
   // Check if we're running in Electron
   useEffect(() => {
     const electron = window.electronAPI;
-    console.log("LoginScreen: Checking for Electron environment", !!electron);
-    setIsElectron(!!electron);
+    const electronDetected = !!electron && (electron.isElectron === true);
+    
+    console.log("LoginScreen: Checking for Electron environment", {
+      electronObjectExists: !!electron,
+      isElectronFlag: electron?.isElectron,
+      electronDetected
+    });
+    
+    setIsElectron(electronDetected);
     
     // Setup listeners for Electron events
-    if (electron) {
+    if (electronDetected) {
       console.log("LoginScreen: Setting up Electron event listeners");
       
       electron.onApiError((message) => {
@@ -160,19 +186,4 @@ export function LoginScreen() {
       </Card>
     </div>
   );
-}
-
-// Add TypeScript declarations for Electron API
-declare global {
-  interface Window {
-    electronAPI?: {
-      login: (credentials: { clientId: string; clientSecret: string; tenantId: string }) => Promise<{ success: boolean; message?: string }>;
-      logout: () => Promise<{ success: boolean }>;
-      onApiReady: (callback: () => void) => void;
-      onApiError: (callback: (message: string) => void) => void;
-      onShowLogin: (callback: () => void) => void;
-      onApiLog: (callback: (message: string) => void) => void;
-      removeAllListeners: (channel: string) => void;
-    };
-  }
 }

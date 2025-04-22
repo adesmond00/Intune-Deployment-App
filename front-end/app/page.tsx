@@ -14,6 +14,25 @@ import { LoginScreen } from "@/components/login-screen"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 
+// Define enhanced ElectronAPI interface that includes isElectron flag
+interface ElectronAPI {
+  isElectron: boolean;
+  login: (credentials: { clientId: string; clientSecret: string; tenantId: string }) => Promise<{ success: boolean; message?: string }>;
+  logout: () => Promise<{ success: boolean }>;
+  onApiReady: (callback: (port: number) => void) => void;
+  onApiError: (callback: (message: string) => void) => void;
+  onShowLogin: (callback: () => void) => void;
+  onApiLog: (callback: (message: string) => void) => void;
+  removeAllListeners: (channel: string) => void;
+}
+
+// Extend Window interface to include our custom electronAPI property
+declare global {
+  interface Window {
+    electronAPI?: ElectronAPI;
+  }
+}
+
 /**
  * Home page component that handles Electron integration and authentication flow
  *
@@ -26,24 +45,30 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Check if we're running in Electron
+    // Check if we're running in Electron - use explicit isElectron flag if available
     const electron = window.electronAPI;
-    setIsElectron(!!electron);
+    const electronDetected = !!electron && (electron.isElectron === true);
     
-    console.log("App initializing, checking for Electron:", !!electron);
+    console.log("App initializing, checking for Electron:", {
+      electronObjectExists: !!electron,
+      isElectronFlag: electron?.isElectron,
+      electronDetected
+    });
     
-    if (electron) {
-      console.log("Setting up Electron event listeners");
+    setIsElectron(electronDetected);
+    
+    if (electronDetected) {
+      console.log("Electron environment detected, setting up event listeners");
       
       // Setup Electron event listeners
       electron.onShowLogin(() => {
-        console.log("Received show-login event");
+        console.log("Received show-login event, showing login screen");
         setShowLogin(true);
         setLoading(false);
       });
       
-      electron.onApiReady(() => {
-        console.log("Received api-ready event");
+      electron.onApiReady((port) => {
+        console.log("Received api-ready event with port:", port);
         setShowLogin(false);
         setApiError(null);
         setLoading(false);
@@ -64,11 +89,20 @@ export default function Home() {
       };
     } else {
       // In browser mode, just show the dashboard
+      console.log("Browser environment detected, skipping Electron initialization");
       setLoading(false);
     }
   }, []);
 
   console.log("Render state:", { isElectron, showLogin, loading, apiError });
+
+  // Special case: if in Electron and login should be shown, override loading state
+  useEffect(() => {
+    if (isElectron && showLogin) {
+      console.log("Login screen should be shown, ending loading state");
+      setLoading(false);
+    }
+  }, [isElectron, showLogin]);
 
   // Show loading state
   if (loading) {
@@ -82,12 +116,14 @@ export default function Home() {
     );
   }
 
-  // In browser mode, always show dashboard
   // In Electron mode, show login if needed
   if (isElectron && showLogin) {
+    console.log("Rendering login screen");
     return <LoginScreen />;
   }
 
+  // Default: show dashboard
+  console.log("Rendering dashboard");
   return (
     <DashboardLayout>
       {apiError && (
