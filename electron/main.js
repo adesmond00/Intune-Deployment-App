@@ -21,6 +21,10 @@ const store = new Store({
   }
 });
 
+// Track if the initial page load has completed
+// This prevents multiple 'show-login' events from being sent
+let initialLoadComplete = false;
+
 // Python API process reference
 let pythonProcess = null;
 let mainWindow = null;
@@ -253,9 +257,13 @@ function handlePageLoaded() {
   // Always show login screen for fresh session approach
   console.log('Enforcing fresh login for new session');
   
-  // Force show login by sending event to renderer
-  if (mainWindow && !mainWindow.isDestroyed()) { // Check if window exists
-      mainWindow.webContents.send('show-login');
+  // Only send 'show-login' on the first load
+  if (!initialLoadComplete) {
+    // Force show login by sending event to renderer
+    if (mainWindow && !mainWindow.isDestroyed()) { // Check if window exists
+        mainWindow.webContents.send('show-login');
+    }
+    initialLoadComplete = true; // Set flag to prevent future 'show-login' events
   }
   
   return false; // Always return false to indicate a fresh session
