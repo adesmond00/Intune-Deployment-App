@@ -23,7 +23,14 @@ import {
 import { useState, useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -36,7 +43,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
  * Path on the API host to the generic .intunewin package that triggers the
  * Winget install/uninstall PowerShell script.
  */
-const INTUNEWIN_PATH = "api/files/Winget-InstallPackage.intunewin";
+const INTUNEWIN_PATH = "files/Winget-InstallPackage.intunewin"; // <── changed
 
 /**
  * Interface defining a Winget application
@@ -109,7 +116,9 @@ export function WingetDeploymentPage() {
   // State for deployment process
   const [isDeploying, setIsDeploying] = useState(false)
   const [deploymentProgress, setDeploymentProgress] = useState(0)
-  const [currentDeployingApp, setCurrentDeployingApp] = useState<string | null>(null)
+  const [currentDeployingApp, setCurrentDeployingApp] = useState<string | null>(
+    null,
+  )
   const [deploymentError, setDeploymentError] = useState<string | null>(null)
 
   // State for dynamic API URL
@@ -119,28 +128,31 @@ export function WingetDeploymentPage() {
     // Check if we're running in Electron
     if (typeof window !== "undefined" && window.electronAPI) {
       // Get current API port
-      window.electronAPI.getApiPort().then((port: number) => {
-        setApiUrlBase(`http://127.0.0.1:${port}`);
-        console.log(`Set API URL base to: http://127.0.0.1:${port}`);
-      }).catch((err: any) => {
-        console.error('Failed to get API port:', err);
-        // Fall back to default port
-      });
-      
+      window.electronAPI
+        .getApiPort()
+        .then((port: number) => {
+          setApiUrlBase(`http://127.0.0.1:${port}`)
+          console.log(`Set API URL base to: http://127.0.0.1:${port}`)
+        })
+        .catch((err: any) => {
+          console.error("Failed to get API port:", err)
+          // Fall back to default port
+        })
+
       // Listen for API ready events (in case port changes)
       window.electronAPI.onApiReady((port: number) => {
-        setApiUrlBase(`http://127.0.0.1:${port}`);
-        console.log(`Updated API URL base to: http://127.0.0.1:${port}`);
-      });
-      
+        setApiUrlBase(`http://127.0.0.1:${port}`)
+        console.log(`Updated API URL base to: http://127.0.0.1:${port}`)
+      })
+
       // Cleanup listener on unmount
       return () => {
         if (window.electronAPI.removeAllListeners) {
-          window.electronAPI.removeAllListeners('api-ready');
+          window.electronAPI.removeAllListeners("api-ready")
         }
-      };
+      }
     }
-  }, []);
+  }, [])
 
   /**
    * Fetches search results from the API
@@ -150,7 +162,9 @@ export function WingetDeploymentPage() {
    */
   const fetchSearchResults = async (query: string): Promise<WingetApp[]> => {
     try {
-      const response = await fetch(`${apiUrlBase}/search?search_term=${encodeURIComponent(query)}`)
+      const response = await fetch(
+        `${apiUrlBase}/search?search_term=${encodeURIComponent(query)}`,
+      )
 
       if (!response.ok) {
         throw new Error(`Search failed with status: ${response.status}`)
@@ -162,7 +176,9 @@ export function WingetDeploymentPage() {
       return data.map((item) => {
         // Extract just the version number without tags/monikers
         const versionMatch = item.Version.match(/^([^\s]+)/)
-        const version = versionMatch ? versionMatch[1] : item.Version.split(" ")[0]
+        const version = versionMatch
+          ? versionMatch[1]
+          : item.Version.split(" ")[0]
 
         return {
           id: item.Id,
@@ -194,7 +210,11 @@ export function WingetDeploymentPage() {
       const results = await fetchSearchResults(searchQuery)
       setSearchResults(results)
     } catch (error) {
-      setSearchError(error instanceof Error ? error.message : "Failed to search for applications")
+      setSearchError(
+        error instanceof Error
+          ? error.message
+          : "Failed to search for applications",
+      )
       setSearchResults([])
     } finally {
       setIsSearching(false)
@@ -344,7 +364,8 @@ export function WingetDeploymentPage() {
       return {
         ...app,
         deploymentStatus: "failed",
-        errorMessage: error instanceof Error ? error.message : "Unknown error occurred",
+        errorMessage:
+          error instanceof Error ? error.message : "Unknown error occurred",
       }
     }
   }
@@ -355,7 +376,9 @@ export function WingetDeploymentPage() {
   const deployApps = async () => {
     const appsToDeployCount = selectedApps.filter((app) => app.isLocked).length
     if (appsToDeployCount === 0) {
-      alert("Please configure and lock at least one application for deployment.")
+      alert(
+        "Please configure and lock at least one application for deployment.",
+      )
       return
     }
 
@@ -366,7 +389,11 @@ export function WingetDeploymentPage() {
     setDeploymentError(null)
 
     // Mark all locked apps as pending deployment
-    setSelectedApps(selectedApps.map((app) => (app.isLocked ? { ...app, deploymentStatus: "pending" } : app)))
+    setSelectedApps(
+      selectedApps.map((app) =>
+        app.isLocked ? { ...app, deploymentStatus: "pending" } : app,
+      ),
+    )
 
     // Get all locked apps
     const appsToDeployList = selectedApps.filter((app) => app.isLocked)
@@ -377,32 +404,50 @@ export function WingetDeploymentPage() {
     for (const app of appsToDeployList) {
       try {
         // Update app status to deploying
-        updatedApps = updatedApps.map((a) => (a.id === app.id ? { ...a, deploymentStatus: "deploying" } : a))
+        updatedApps = updatedApps.map((a) =>
+          a.id === app.id ? { ...a, deploymentStatus: "deploying" } : a,
+        )
         setSelectedApps(updatedApps)
 
         // Deploy the app
         const deployedApp = await deployApp(app)
 
         // Update the app in the list with deployment result
-        updatedApps = updatedApps.map((a) => (a.id === deployedApp.id ? deployedApp : a))
-        setSelectedApps(updatedApps)
-
-        // Update progress
-        completedCount++
-        setDeploymentProgress(Math.round((completedCount / appsToDeployList.length) * 100))
-      } catch (error) {
-        // Handle unexpected errors
-        setDeploymentError(`Failed to deploy ${app.name}: ${error instanceof Error ? error.message : "Unknown error"}`)
-
-        // Update app status to failed
         updatedApps = updatedApps.map((a) =>
-          a.id === app.id ? { ...a, deploymentStatus: "failed", errorMessage: "Deployment process failed" } : a,
+          a.id === deployedApp.id ? deployedApp : a,
         )
         setSelectedApps(updatedApps)
 
         // Update progress
         completedCount++
-        setDeploymentProgress(Math.round((completedCount / appsToDeployList.length) * 100))
+        setDeploymentProgress(
+          Math.round((completedCount / appsToDeployList.length) * 100),
+        )
+      } catch (error) {
+        // Handle unexpected errors
+        setDeploymentError(
+          `Failed to deploy ${app.name}: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        )
+
+        // Update app status to failed
+        updatedApps = updatedApps.map((a) =>
+          a.id === app.id
+            ? {
+                ...a,
+                deploymentStatus: "failed",
+                errorMessage: "Deployment process failed",
+              }
+            : a,
+        )
+        setSelectedApps(updatedApps)
+
+        // Update progress
+        completedCount++
+        setDeploymentProgress(
+          Math.round((completedCount / appsToDeployList.length) * 100),
+        )
       }
     }
 
@@ -416,10 +461,16 @@ export function WingetDeploymentPage() {
    */
   const getDeploymentStats = () => {
     const lockedApps = selectedApps.filter((app) => app.isLocked)
-    const successful = lockedApps.filter((app) => app.deploymentStatus === "success").length
-    const failed = lockedApps.filter((app) => app.deploymentStatus === "failed").length
+    const successful = lockedApps.filter(
+      (app) => app.deploymentStatus === "success",
+    ).length
+    const failed = lockedApps.filter(
+      (app) => app.deploymentStatus === "failed",
+    ).length
     const pending = lockedApps.filter(
-      (app) => app.deploymentStatus === "pending" || app.deploymentStatus === "deploying",
+      (app) =>
+        app.deploymentStatus === "pending" ||
+        app.deploymentStatus === "deploying",
     ).length
 
     return { total: lockedApps.length, successful, failed, pending }
@@ -449,7 +500,8 @@ export function WingetDeploymentPage() {
           <CardHeader>
             <CardTitle>Deployment Progress</CardTitle>
             <CardDescription>
-              Deploying applications to Intune ({deploymentStats.successful} of {deploymentStats.total} completed)
+              Deploying applications to Intune (
+              {deploymentStats.successful} of {deploymentStats.total} completed)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -476,49 +528,66 @@ export function WingetDeploymentPage() {
       )}
 
       {/* Deployment Results Section - shown after deployment */}
-      {!isDeploying && (deploymentStats.successful > 0 || deploymentStats.failed > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Deployment Results</CardTitle>
-            <CardDescription>
-              {deploymentStats.successful} successful, {deploymentStats.failed} failed
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {selectedApps
-                .filter((app) => app.deploymentStatus === "success" || app.deploymentStatus === "failed")
-                .map((app) => (
-                  <div key={`result-${app.id}`} className="flex items-start gap-3 p-3 rounded-md border">
-                    {app.deploymentStatus === "success" ? (
-                      <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
-                    ) : (
-                      <XCircle className="h-5 w-5 text-red-500 mt-0.5" />
-                    )}
-                    <div className="flex-1">
-                      <h4 className="font-medium">{app.name}</h4>
-                      <p className="text-sm text-muted-foreground">{app.id}</p>
-                      {app.deploymentStatus === "success" && app.appId && (
-                        <p className="text-xs mt-1">
-                          App ID: <code className="bg-muted px-1 py-0.5 rounded">{app.appId}</code>
-                        </p>
+      {!isDeploying &&
+        (deploymentStats.successful > 0 || deploymentStats.failed > 0) && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Deployment Results</CardTitle>
+              <CardDescription>
+                {deploymentStats.successful} successful,{" "}
+                {deploymentStats.failed} failed
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {selectedApps
+                  .filter(
+                    (app) =>
+                      app.deploymentStatus === "success" ||
+                      app.deploymentStatus === "failed",
+                  )
+                  .map((app) => (
+                    <div
+                      key={`result-${app.id}`}
+                      className="mb-4 flex items-start gap-3 rounded-md border p-3 last:mb-0"
+                    >
+                      {app.deploymentStatus === "success" ? (
+                        <CheckCircle className="mt-0.5 h-5 w-5 text-green-500" />
+                      ) : (
+                        <XCircle className="mt-0.5 h-5 w-5 text-red-500" />
                       )}
-                      {app.deploymentStatus === "failed" && app.errorMessage && (
-                        <p className="text-xs text-red-500 mt-1">{app.errorMessage}</p>
-                      )}
+                      <div className="flex-1">
+                        <h4 className="font-medium">{app.name}</h4>
+                        <p className="text-sm text-muted-foreground">{app.id}</p>
+                        {app.deploymentStatus === "success" && app.appId && (
+                          <p className="mt-1 text-xs">
+                            App ID:{" "}
+                            <code className="rounded bg-muted px-1 py-0.5">
+                              {app.appId}
+                            </code>
+                          </p>
+                        )}
+                        {app.deploymentStatus === "failed" &&
+                          app.errorMessage && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {app.errorMessage}
+                            </p>
+                          )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                  ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
       {/* Search Section */}
       <Card>
         <CardHeader>
           <CardTitle>Search for Applications</CardTitle>
-          <CardDescription>Search for applications in the Windows Package Manager repository</CardDescription>
+          <CardDescription>
+            Search for applications in the Windows Package Manager repository
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {/* Search input and button */}
@@ -555,11 +624,16 @@ export function WingetDeploymentPage() {
           {/* Search Results */}
           {searchResults.length > 0 && (
             <div className="mt-4">
-              <h3 className="mb-2 font-medium">Search Results ({searchResults.length})</h3>
+              <h3 className="mb-2 font-medium">
+                Search Results ({searchResults.length})
+              </h3>
               <ScrollArea className="h-[300px] rounded-md border">
                 <div className="p-4">
                   {searchResults.map((app) => (
-                    <div key={app.id} className="mb-4 flex items-start justify-between rounded-lg border p-3 last:mb-0">
+                    <div
+                      key={app.id}
+                      className="mb-4 flex items-start justify-between rounded-lg border p-3 last:mb-0"
+                    >
                       {/* App information */}
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
@@ -568,7 +642,9 @@ export function WingetDeploymentPage() {
                             {app.version}
                           </Badge>
                         </div>
-                        <p className="text-sm text-muted-foreground">{app.description}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {app.description}
+                        </p>
                         <p className="mt-1 text-xs text-muted-foreground">
                           <span className="font-medium">ID:</span> {app.id}
                         </p>
@@ -579,9 +655,13 @@ export function WingetDeploymentPage() {
                         variant="outline"
                         className="ml-2 flex items-center gap-1"
                         onClick={() => addApp(app)}
-                        disabled={selectedApps.some((selectedApp) => selectedApp.id === app.id)}
+                        disabled={selectedApps.some(
+                          (selectedApp) => selectedApp.id === app.id,
+                        )}
                       >
-                        {selectedApps.some((selectedApp) => selectedApp.id === app.id) ? (
+                        {selectedApps.some(
+                          (selectedApp) => selectedApp.id === app.id,
+                        ) ? (
                           <>
                             <Check className="h-3 w-3" /> Added
                           </>
@@ -605,12 +685,17 @@ export function WingetDeploymentPage() {
         <Card>
           <CardHeader>
             <CardTitle>Selected Applications ({selectedApps.length})</CardTitle>
-            <CardDescription>Configure and prepare applications for deployment</CardDescription>
+            <CardDescription>
+              Configure and prepare applications for deployment
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {selectedApps.map((app) => (
-                <div key={app.id} className="rounded-lg border overflow-hidden">
+                <div
+                  key={app.id}
+                  className="overflow-hidden rounded-lg border"
+                >
                   {/* App Header - always visible */}
                   <div className="flex items-center justify-between p-4">
                     <div className="flex flex-1 items-center gap-2">
@@ -632,22 +717,34 @@ export function WingetDeploymentPage() {
                           </Badge>
                           {/* Status badges */}
                           {app.deploymentStatus === "success" && (
-                            <Badge variant="default" className="bg-green-500 text-xs">
+                            <Badge
+                              variant="default"
+                              className="bg-green-500 text-xs"
+                            >
                               Deployed
                             </Badge>
                           )}
                           {app.deploymentStatus === "failed" && (
-                            <Badge variant="default" className="bg-red-500 text-xs">
+                            <Badge
+                              variant="default"
+                              className="bg-red-500 text-xs"
+                            >
                               Failed
                             </Badge>
                           )}
                           {app.deploymentStatus === "deploying" && (
-                            <Badge variant="default" className="bg-blue-500 text-xs">
+                            <Badge
+                              variant="default"
+                              className="bg-blue-500 text-xs"
+                            >
                               Deploying...
                             </Badge>
                           )}
                           {app.isLocked && !app.deploymentStatus && (
-                            <Badge variant="default" className="bg-green-500 text-xs">
+                            <Badge
+                              variant="default"
+                              className="bg-green-500 text-xs"
+                            >
                               Ready to Deploy
                             </Badge>
                           )}
@@ -660,7 +757,12 @@ export function WingetDeploymentPage() {
                       <div className="flex items-center gap-2">
                         {/* Remove button - only visible when not locked */}
                         {!app.isLocked && !app.deploymentStatus && (
-                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => removeApp(app.id)}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0"
+                            onClick={() => removeApp(app.id)}
+                          >
                             <Trash2 className="h-4 w-4" />
                             <span className="sr-only">Remove</span>
                           </Button>
@@ -684,7 +786,11 @@ export function WingetDeploymentPage() {
                             className="h-8 w-8 p-0"
                             onClick={() => toggleAppExpansion(app.id)}
                           >
-                            {app.isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                            {app.isExpanded ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4" />
+                            )}
                             <span className="sr-only">Toggle</span>
                           </Button>
                         )}
@@ -698,17 +804,26 @@ export function WingetDeploymentPage() {
                       <div className="grid gap-4 md:grid-cols-2">
                         {/* Description field */}
                         <div className="space-y-2">
-                          <Label htmlFor={`${app.id}-description`}>Description</Label>
+                          <Label htmlFor={`${app.id}-description`}>
+                            Description
+                          </Label>
                           <Textarea
                             id={`${app.id}-description`}
                             placeholder="Enter application description"
                             className="min-h-[100px]"
                             value={app.customDescription || ""}
-                            onChange={(e) => updateAppConfig(app.id, "customDescription", e.target.value)}
+                            onChange={(e) =>
+                              updateAppConfig(
+                                app.id,
+                                "customDescription",
+                                e.target.value,
+                              )
+                            }
                             disabled={app.isLocked}
                           />
                           <p className="text-xs text-muted-foreground">
-                            Provide a description of the application for documentation
+                            Provide a description of the application for
+                            documentation
                           </p>
                         </div>
 
@@ -719,11 +834,18 @@ export function WingetDeploymentPage() {
                             id={`${app.id}-publisher`}
                             placeholder="e.g., Microsoft Corporation"
                             value={app.customPublisher || ""}
-                            onChange={(e) => updateAppConfig(app.id, "customPublisher", e.target.value)}
+                            onChange={(e) =>
+                              updateAppConfig(
+                                app.id,
+                                "customPublisher",
+                                e.target.value,
+                              )
+                            }
                             disabled={app.isLocked}
                           />
                           <p className="text-xs text-muted-foreground">
-                            Specify the publisher or developer of the application
+                            Specify the publisher or developer of the
+                            application
                           </p>
                         </div>
                       </div>
@@ -736,12 +858,20 @@ export function WingetDeploymentPage() {
           <CardFooter>
             <Button
               onClick={deployApps}
-              disabled={!selectedApps.some((app) => app.isLocked && !app.deploymentStatus) || isDeploying}
+              disabled={
+                !selectedApps.some(
+                  (app) => app.isLocked && !app.deploymentStatus,
+                ) || isDeploying
+              }
               className="w-full"
             >
               {isDeploying
                 ? `Deploying... (${deploymentStats.successful}/${deploymentStats.total})`
-                : `Deploy ${selectedApps.filter((app) => app.isLocked && !app.deploymentStatus).length} Applications to Intune`}
+                : `Deploy ${
+                    selectedApps.filter(
+                      (app) => app.isLocked && !app.deploymentStatus,
+                    ).length
+                  } Applications to Intune`}
             </Button>
           </CardFooter>
         </Card>
