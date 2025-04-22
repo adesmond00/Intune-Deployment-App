@@ -100,6 +100,32 @@ async def upload_win32_app(body: UploadRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    import sys
+    import argparse
+    from functions.auth import get_access_token
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Intune Deployment API')
+    parser.add_argument('--verify-only', action='store_true', 
+                        help='Verify authentication credentials and exit without starting the API server')
+    args = parser.parse_args()
+    
+    # If --verify-only is specified, just verify credentials and exit
+    if args.verify_only:
+        print("Verifying authentication credentials...")
+        try:
+            token = get_access_token()
+            if token:
+                print("Authentication successful: Token acquired successfully")
+                sys.exit(0)  # Success
+            else:
+                print("Authentication failed: Could not acquire token")
+                sys.exit(1)  # Failure
+        except Exception as e:
+            print(f"Authentication failed: {str(e)}")
+            sys.exit(1)  # Failure
+    
+    # Otherwise, start the API server normally
     # When running api.py directly, Python might still struggle with the relative import
     # depending on how it's executed. Running the app via uvicorn from the project root
     # is the standard way: uvicorn api.api:app --reload

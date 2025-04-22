@@ -492,9 +492,11 @@ async function startPythonApi(portToUse) {
 async function verifyCredentials(credentials) {
   console.log('Verifying credentials before starting the API...');
   
-  // Create a temporary verification process using the existing auth.py module
   return new Promise((resolve, reject) => {
     try {
+      // Instead of creating a temporary script, directly use the existing Python API
+      // with a special flag to just verify credentials and exit
+      
       // Set environment variables for the verification process
       const env = {
         ...process.env,
@@ -503,40 +505,42 @@ async function verifyCredentials(credentials) {
         GRAPH_TENANT_ID: credentials.tenantId
       };
       
-      // Create a temporary verification script that uses the existing auth.py
-      const verifyPath = path.join(app.getAppPath(), 'api', 'verify_auth.py');
+      // Find the API script (main.py) in the api directory
+      let apiPath;
+      const possibleApiPaths = [
+        path.join(__dirname, '..', 'api', 'main.py'),       // Development - relative to electron dir
+        path.join(process.cwd(), 'api', 'main.py'),         // Development - from current working dir
+        path.join(app.getAppPath(), '..', 'api', 'main.py') // Production - relative to app
+      ];
       
-      // Create the verification script if it doesn't exist
-      const verifyContent = `
-import sys
-import traceback
-from functions.auth import get_access_token
-
-try:
-    # Try to get an access token using the existing auth module
-    token = get_access_token()
-    if token:
-        print("Authentication successful")
-        sys.exit(0)
-    else:
-        print("Authentication failed: Invalid credentials")
-        sys.exit(1)
-except Exception as e:
-    print(f"Authentication failed: {str(e)}")
-    traceback.print_exc()
-    sys.exit(1)
-`;
+      // Find the first path that exists
+      for (const testPath of possibleApiPaths) {
+        try {
+          if (fs.existsSync(testPath)) {
+            apiPath = testPath;
+            console.log('Found API path:', apiPath);
+            break;
+          }
+        } catch (err) {
+          // Continue to next path
+        }
+      }
       
-      fs.writeFileSync(verifyPath, verifyContent);
+      if (!apiPath) {
+        console.error('Could not locate API main.py file');
+        if (mainWindow) {
+          mainWindow.webContents.send('api-error', 'Could not locate the API module. Please check your installation.');
+        }
+        resolve(false);
+        return;
+      }
       
-      // Change the working directory for verification
-      const apiDir = path.join(app.getAppPath(), 'api');
+      const apiDir = path.dirname(apiPath);
       
-      // Run the verification script
-      const verifyProcess = spawn('python', ['verify_auth.py'], { 
+      // Run the API with a verify-only mode
+      const verifyProcess = spawn('python', [apiPath, '--verify-only'], { 
         cwd: apiDir,
-        env: env,
-        shell: true
+        env: env
       });
       
       let authOutput = '';
@@ -546,24 +550,40 @@ except Exception as e:
         const output = data.toString();
         authOutput += output;
         console.log(`Verify auth stdout: ${output}`);
+        
+        // Check for successful authentication message
+        if (output.includes('Authentication successful') || output.includes('Token acquired successfully')) {
+          console.log('Credential verification successful');
+          // Kill the process since we just needed verification
+          verifyProcess.kill();
+          resolve(true);
+        }
       });
       
       verifyProcess.stderr.on('data', (data) => {
         const output = data.toString();
         authError += output;
         console.error(`Verify auth stderr: ${output}`);
+        
+        // Check for authentication failure messages
+        if (output.includes('Authentication failed') || 
+            output.includes('Invalid client') || 
+            output.includes('AADSTS')) {
+          console.error('Authentication failed in verification');
+          // Kill the process since we detected an error
+          verifyProcess.kill();
+          
+          if (mainWindow) {
+            mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID.');
+          }
+          
+          resolve(false);
+        }
       });
       
       verifyProcess.on('close', (code) => {
-        // Clean up the temporary file
-        try {
-          fs.unlinkSync(verifyPath);
-        } catch (err) {
-          console.warn(`Could not delete temporary verification script: ${err.message}`);
-        }
-
         if (code === 0) {
-          console.log('Credential verification successful');
+          console.log('Credential verification process completed successfully');
           resolve(true);
         } else {
           console.error(`Credential verification failed with code ${code}`);
