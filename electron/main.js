@@ -47,40 +47,42 @@ function startNextDevServer() {
     // Define the path to the Next.js directory
     const nextJsPath = path.join(__dirname, '..', 'front-end');
     
-    // Start Next.js dev server
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    nextProcess = spawn(npmCmd, ['run', 'dev'], { 
-      cwd: nextJsPath,
+    // Try to start with a specific range of ports
+    const initialPort = 3030; // Start from a different port than the default Next.js
+    
+    // Build the command with the specified port
+    let nextCommand = 'npm run dev';
+    if (process.platform === 'win32') {
+      // Add port specification - start higher to avoid common conflicts
+      nextCommand = `set PORT=${initialPort} && npm run dev`;
+    } else {
+      nextCommand = `PORT=${initialPort} npm run dev`;
+    }
+    
+    nextProcess = spawn(nextCommand, {
       shell: true,
-      stdio: 'pipe'
+      cwd: nextJsPath,
+      env: process.env
     });
     
     console.log('Next.js dev server process started');
     
-    // Listen for stdout to determine when server is ready
-    let serverOutput = '';
-    let serverStarted = false;
-    
     nextProcess.stdout.on('data', (data) => {
       const output = data.toString();
-      serverOutput += output;
       console.log(`Next.js stdout: ${output}`);
       
-      // Check for port in the server output
-      const portMatch = output.match(/http:\/\/localhost:(\d+)/);
-      if (portMatch && portMatch[1]) {
-        nextJsPort = parseInt(portMatch[1], 10);
-        console.log(`Detected Next.js running on port: ${nextJsPort}`);
+      // Look for "ready" messages from Next.js
+      if (output.includes('ready') || output.includes('Ready')) {
+        console.log('Next.js server detected as ready');
       }
       
-      // Check if server is ready
-      if (output.includes('ready started server') || 
-          output.includes('Local:') ||
-          output.includes('started server on') ||
-          output.includes('localhost:')) {
-        console.log('Next.js server detected as ready');
-        serverStarted = true;
-        resolve();
+      // Check for the actual port Next.js is running on
+      const portMatch = output.match(/http:\/\/localhost:(\d+)/);
+      if (portMatch && portMatch[1]) {
+        const detectedPort = parseInt(portMatch[1], 10);
+        console.log(`Next.js port changed to: ${detectedPort}`);
+        nextJsPort = detectedPort;
+        store.set('nextJsPort', detectedPort);
       }
     });
     
@@ -88,39 +90,40 @@ function startNextDevServer() {
       const output = data.toString();
       console.error(`Next.js stderr: ${output}`);
       
-      // Check for port change message in stderr
-      const portChangeMatch = output.match(/Port (\d+) is in use, trying (\d+) instead/);
-      if (portChangeMatch && portChangeMatch[2]) {
-        nextJsPort = parseInt(portChangeMatch[2], 10);
-        console.log(`Next.js port changed to: ${nextJsPort}`);
+      // Also check stderr for port information as Next.js logs port conflicts here
+      const portMatch = output.match(/Port (\d+) is in use/);
+      if (portMatch && portMatch[1]) {
+        console.log(`Port ${portMatch[1]} is in use, Next.js will try another port`);
+      }
+      
+      // Check for fatal errors
+      if (output.includes('Failed to start server') || 
+          output.includes('Error: listen EADDRINUSE')) {
+        console.error('Next.js server failed to start due to port conflicts');
       }
     });
     
-    // Handle early exit with error
-    nextProcess.on('exit', (code) => {
-      if (code !== 0 && !serverStarted) {
-        console.error(`Next.js process exited with code ${code} before starting.`);
-        reject(new Error(`Next.js process exited with code ${code}`));
+    nextProcess.on('close', (code) => {
+      console.log(`Next.js process exited with code ${code}`);
+      nextProcess = null;
+      
+      // Restart if it failed
+      if (code !== 0 && mainWindow) {
+        console.log('Next.js server failed, notifying user...');
+        mainWindow.webContents.send('nextjs-error', 'Next.js development server crashed. Please restart the application.');
       }
-    });
-    
-    // Handle errors
-    nextProcess.on('error', (err) => {
-      console.error('Failed to start Next.js server:', err);
-      reject(err);
     });
     
     // Set timeout
     setTimeout(() => {
-      if (!serverStarted) {
+      if (!nextProcess.killed) {
         // If timeout reached and server not started, reject
         console.error('Next.js server failed to start within timeout period');
-        if (nextProcess && !nextProcess.killed) {
-           nextProcess.kill(); // Attempt to kill the lingering process
+        if (nextProcess) {
+          nextProcess.kill(); // Attempt to kill the lingering process
         }
         reject(new Error('Failed to start Next.js server within timeout period'));
       }
-      // No need to resolve here anymore, resolve happens on readiness detection
     }, 15000); // Increased timeout slightly to 15s
   });
 }
@@ -167,13 +170,32 @@ function createWindow() {
           // Open DevTools in development mode
           mainWindow.webContents.openDevTools();
           
-          // Check login status once page is loaded
-          mainWindow.webContents.on('did-finish-load', () => {
-            // Call handlePageLoaded to enforce showing the login screen
-            handlePageLoaded();
+          // Event handler for when the web contents are fully loaded
+          mainWindow.webContents.on('did-finish-load', async () => {
+            console.log('Main window finished loading');
             
-            // No need for fallback mechanism - we'll ensure the main login screen works properly
-            console.log('Main page loaded, login screen will be shown via IPC');
+            // Check login state
+            const isLoggedIn = store.get('isLoggedIn') || false;
+            console.log('App loaded, isLoggedIn:', isLoggedIn);
+            
+            // Always enforce fresh login on app start for better reliability
+            console.log('Enforcing fresh login for new session');
+            
+            // Use a short timeout to make sure the renderer is ready to receive IPC messages
+            setTimeout(() => {
+              console.log('Main page loaded, login screen will be shown via IPC');
+              console.log('Sending show-login event to renderer');
+              mainWindow.webContents.send('show-login');
+              
+              // Send a second show-login event after a slight delay if needed
+              // This helps ensure the event is received properly
+              setTimeout(() => {
+                console.log('Sending backup show-login event to renderer');
+                mainWindow.webContents.send('show-login');
+              }, 1000);
+            }, 500);
+            
+            initialLoadComplete = true;
           });
         } else {
           retryOrFail();
@@ -837,6 +859,53 @@ function showErrorPage(errorMessage) {
     app.quit();
   }
 }
+
+// Function to check for existing Next.js processes on Windows
+const killExistingNextProcesses = () => {
+  if (process.platform === 'win32') {
+    try {
+      console.log('Checking for existing Next.js processes...');
+      const { execSync } = require('child_process');
+      const result = execSync('tasklist /FI "IMAGENAME eq node.exe" /FO CSV /NH').toString();
+      
+      // Extract PIDs from tasklist output that look like Next.js processes
+      const pidRegex = /"node.exe",(\d+)/g;
+      let match;
+      const possibleNextPids = [];
+      
+      while ((match = pidRegex.exec(result)) !== null) {
+        possibleNextPids.push(match[1]);
+      }
+      
+      if (possibleNextPids.length > 0) {
+        console.log(`Found ${possibleNextPids.length} possible Next.js processes. Checking command lines...`);
+        
+        // For each PID, check if it's actually a Next.js server
+        for (const pid of possibleNextPids) {
+          try {
+            // Get command line for the process
+            const cmdlineOutput = execSync(`wmic process where ProcessId=${pid} get CommandLine /format:list`).toString();
+            
+            // Check if it's a Next.js process
+            if (cmdlineOutput.includes('next dev') || cmdlineOutput.includes('node_modules\\next')) {
+              console.log(`Killing Next.js process with PID ${pid}`);
+              execSync(`taskkill /F /PID ${pid}`);
+            }
+          } catch (cmdError) {
+            console.log(`Error getting command line for PID ${pid}:`, cmdError.message);
+          }
+        }
+      } else {
+        console.log('No existing Next.js processes found.');
+      }
+    } catch (error) {
+      console.error('Error checking for existing Next.js processes:', error);
+    }
+  }
+};
+
+// Kill any existing Next.js processes on startup
+killExistingNextProcesses();
 
 // Standard Electron app lifecycle events
 app.on('activate', function () {
