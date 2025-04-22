@@ -39,6 +39,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 const API_BASE_URL = "http://127.0.0.1:8000"
 
 /**
+ * Path on the API host to the generic .intunewin package that triggers the
+ * Winget install/uninstall PowerShell script.
+ */
+const INTUNEWIN_PATH = "api/files/Winget-InstallPackage.intunewin";
+
+/**
  * Interface defining a Winget application
  */
 interface WingetApp {
@@ -279,7 +285,7 @@ export function WingetDeploymentPage() {
 
       // Prepare request payload
       const payload: UploadRequest = {
-        path: `/path/to/intunewin/${app.id}.intunewin`, // This would be dynamically generated in a real app
+        path: INTUNEWIN_PATH,
         display_name: app.name,
         package_id: app.id,
         publisher: app.customPublisher || app.publisher,
