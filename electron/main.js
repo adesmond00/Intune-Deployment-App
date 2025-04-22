@@ -521,6 +521,117 @@ async function startPythonApi(portToUse) {
   }
 }
 
+/**
+ * Verifies if the provided Graph API credentials are valid
+ * @param {Object} credentials - Graph API credentials (clientId, clientSecret, tenantId)
+ * @returns {Promise<boolean>} - True if credentials are valid, false otherwise
+ */
+async function verifyCredentials(credentials) {
+  console.log('Verifying credentials before starting the API...');
+  
+  // Temporary process to verify credentials without starting the full API
+  // This runs a minimal version of the API just to check auth
+  return new Promise((resolve, reject) => {
+    try {
+      // NOTE: In a production implementation, the Python API would expose a
+      // dedicated "/verify-auth" endpoint that only checks credentials
+      // without starting the full server
+      
+      // Create a temporary verification process with the credentials
+      const verifyProcess = spawn('python', [
+        '-c',
+        `
+import os
+import sys
+import msal
+
+# Set environment variables from credentials
+os.environ['GRAPH_CLIENT_ID'] = '${credentials.clientId}'
+os.environ['GRAPH_CLIENT_SECRET'] = '${credentials.clientSecret}'
+os.environ['GRAPH_TENANT_ID'] = '${credentials.tenantId}'
+
+# Configure MSAL authentication parameters
+authority = f"https://login.microsoftonline.com/{os.environ['GRAPH_TENANT_ID']}"
+app = msal.ConfidentialClientApplication(
+    client_id=os.environ['GRAPH_CLIENT_ID'],
+    client_credential=os.environ['GRAPH_CLIENT_SECRET'],
+    authority=authority
+)
+
+# Try to get a token to verify credentials
+try:
+    # Simple credential verification - request a token with basic scope
+    result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
+    
+    if "error" in result:
+        print(f"Authentication failed: {result.get('error_description', 'Unknown error')}")
+        sys.exit(1)
+    else:
+        print("Authentication successful")
+        sys.exit(0)
+except Exception as e:
+    print(f"Authentication failed: {str(e)}")
+    sys.exit(1)
+        `
+      ], { shell: true });
+      
+      let authOutput = '';
+      let authError = '';
+      
+      verifyProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        authOutput += output;
+        console.log(`Verify auth stdout: ${output}`);
+      });
+      
+      verifyProcess.stderr.on('data', (data) => {
+        const output = data.toString();
+        authError += output;
+        console.error(`Verify auth stderr: ${output}`);
+      });
+      
+      verifyProcess.on('close', (code) => {
+        if (code === 0) {
+          console.log('Credential verification successful');
+          resolve(true);
+        } else {
+          console.error(`Credential verification failed with code ${code}`);
+          console.error(`Error: ${authError}`);
+          
+          // Send specific error message to renderer
+          if (mainWindow) {
+            if (authOutput.includes('Authentication failed') || authError.includes('Authentication failed')) {
+              mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID.');
+            } else {
+              mainWindow.webContents.send('api-error', `Credential verification failed: ${authError || authOutput || 'Unknown error'}`);
+            }
+          }
+          
+          resolve(false);
+        }
+      });
+      
+      // Set a timeout for the verification process
+      setTimeout(() => {
+        if (verifyProcess) {
+          verifyProcess.kill();
+          console.error('Credential verification timed out');
+          
+          if (mainWindow) {
+            mainWindow.webContents.send('api-error', 'Credential verification timed out. Please check your network connection and try again.');
+          }
+          
+          resolve(false);
+        }
+      }, 10000); // 10 second timeout
+      
+    } catch (error) {
+      console.error('Error during credential verification:', error);
+      reject(error);
+    }
+  });
+}
+
 // Handle login from renderer
 ipcMain.handle('login', async (event, credentials) => {
   try {
@@ -533,6 +644,22 @@ ipcMain.handle('login', async (event, credentials) => {
     // Validate credentials
     if (!credentials.clientId || !credentials.clientSecret || !credentials.tenantId) {
       return { success: false, message: 'All fields are required' };
+    }
+
+    // Kill any existing Python process before starting a new one
+    if (pythonProcess) {
+      console.log('Terminating existing Python API process before starting new one');
+      pythonProcess.kill();
+      pythonProcess = null;
+      
+      // Wait a moment for the process to fully terminate and release ports
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Verify credentials before starting the API
+    const credentialsValid = await verifyCredentials(credentials);
+    if (!credentialsValid) {
+      return { success: false, message: 'Invalid credentials' };
     }
 
     // Store credentials securely using the correct key
@@ -607,6 +734,31 @@ function showErrorPage(errorMessage) {
 }
 
 // Standard Electron app lifecycle events
+app.on('activate', function () {
+  // On macOS it's common to re-create a window in the app when the
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+app.on('window-all-closed', function () {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  console.log('App quitting, cleaning up processes...');
+  if (pythonProcess) {
+    console.log('Terminating Python API process...');
+    pythonProcess.kill();
+    pythonProcess = null; // Clear the reference
+  }
+  
+  if (nextProcess) {
+    console.log('Terminating Next.js dev server process...');
+    nextProcess.kill();
+    nextProcess = null; // Clear the reference
+  }
+  console.log('Cleanup complete.');
+});
+
 app.whenReady().then(async () => {
   // FORCE RESET: Always start with a clean slate
   console.log('App starting, forcibly clearing any previous login state');
@@ -645,30 +797,4 @@ app.whenReady().then(async () => {
   createWindow();
 
   console.log('App ready. Waiting for user login to start API.');
-
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
-
-app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-// Clean up processes on exit
-app.on('before-quit', () => {
-  console.log('App quitting, cleaning up processes...');
-  if (pythonProcess) {
-    console.log('Terminating Python API process...');
-    pythonProcess.kill();
-    pythonProcess = null; // Clear the reference
-  }
-  
-  if (nextProcess) {
-    console.log('Terminating Next.js dev server process...');
-    nextProcess.kill();
-    nextProcess = null; // Clear the reference
-  }
-  console.log('Cleanup complete.');
 });
