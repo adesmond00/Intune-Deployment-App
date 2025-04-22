@@ -227,9 +227,8 @@ function handlePageLoaded() {
     // Force show login by sending event to renderer
     mainWindow.webContents.send('show-login');
   } else {
-    // If logged in, start API with stored credentials
-    console.log('Starting API with stored credentials');
-    startPythonApi();
+    // If logged in, API is already started by app.whenReady
+    console.log('App loaded and user is logged in. API should be running.');
   }
 }
 
