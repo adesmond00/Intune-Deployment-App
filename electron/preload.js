@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Get current API port, if available
   getApiPort: () => ipcRenderer.invoke('get-api-port'),
+  
+  // Get value from the electron-store
+  getStoreValue: (key) => ipcRenderer.invoke('get-store-value', key),
+  
   removeAllListeners: (channel) => {
     ipcRenderer.removeAllListeners(channel);
   }
