@@ -35,17 +35,14 @@ let nextJsPort = 3000; // Default port, will be updated if it changes
 
 // Start the Next.js development server
 function startNextDevServer() {
-  console.log('Starting Next.js development server...');
-  
-  // Check if we're in development mode
-  if (process.env.NODE_ENV !== 'development') {
-    console.log('Not in development mode, skipping Next.js server start');
-    return Promise.resolve();
-  }
-  
   return new Promise((resolve, reject) => {
-    // Define the path to the Next.js directory
-    const nextJsPath = path.join(__dirname, '..', 'front-end');
+    if (process.env.NODE_ENV !== 'development') {
+      // In production, just resolve immediately
+      resolve();
+      return;
+    }
+    
+    console.log('Starting Next.js development server...');
     
     // Try to start with a specific range of ports
     const initialPort = 3030; // Start from a different port than the default Next.js
@@ -61,11 +58,25 @@ function startNextDevServer() {
     
     nextProcess = spawn(nextCommand, {
       shell: true,
-      cwd: nextJsPath,
+      cwd: path.join(__dirname, '../front-end'),
       env: process.env
     });
     
     console.log('Next.js dev server process started');
+    
+    // Track whether we've resolved the promise already
+    let hasResolved = false;
+    
+    // Function to resolve the promise once
+    const resolveOnce = () => {
+      if (!hasResolved) {
+        hasResolved = true;
+        clearTimeout(timeoutId); // Clear the timeout when resolved
+        nextJsReady = true;
+        console.log('Next.js server assumed ready on port:', nextJsPort);
+        resolve();
+      }
+    };
     
     nextProcess.stdout.on('data', (data) => {
       const output = data.toString();
@@ -73,7 +84,9 @@ function startNextDevServer() {
       
       // Look for "ready" messages from Next.js
       if (output.includes('ready') || output.includes('Ready')) {
+        nextJsReady = true;
         console.log('Next.js server detected as ready');
+        resolveOnce();
       }
       
       // Check for the actual port Next.js is running on
@@ -105,26 +118,78 @@ function startNextDevServer() {
     
     nextProcess.on('close', (code) => {
       console.log(`Next.js process exited with code ${code}`);
+      nextJsReady = false;
       nextProcess = null;
       
-      // Restart if it failed
-      if (code !== 0 && mainWindow) {
-        console.log('Next.js server failed, notifying user...');
-        mainWindow.webContents.send('nextjs-error', 'Next.js development server crashed. Please restart the application.');
+      // Only reject if we haven't resolved yet
+      if (code !== 0 && !hasResolved) {
+        console.log('Next.js server fail');
+        reject(new Error(`Next.js process exited with code ${code}`));
       }
     });
     
     // Set timeout
-    setTimeout(() => {
-      if (!nextProcess.killed) {
-        // If timeout reached and server not started, reject
-        console.error('Next.js server failed to start within timeout period');
-        if (nextProcess) {
-          nextProcess.kill(); // Attempt to kill the lingering process
+    const timeoutId = setTimeout(() => {
+      // Use a polling approach to check server status
+      console.log('Waiting for Next.js server to be ready...');
+      
+      // Try to poll the server to see if it's up
+      let pollAttempts = 0;
+      const maxPollAttempts = 30;
+      
+      function pollNextJsServer() {
+        if (hasResolved) return; // Skip if already resolved
+        
+        pollAttempts++;
+        console.log(`Polling Next.js server, attempt ${pollAttempts}/${maxPollAttempts}`);
+        
+        if (nextJsPort) {
+          const url = `http://localhost:${nextJsPort}`;
+          console.log(`Attempting to connect to: ${url}`);
+          
+          // Use http request to check if server is up
+          const http = require('http');
+          http.get(url, (res) => {
+            console.log(`Next.js server responded with status: ${res.statusCode}`);
+            if (res.statusCode === 200) {
+              console.log('Next.js server is ready, loading URL');
+              resolveOnce();
+            } else if (pollAttempts < maxPollAttempts) {
+              setTimeout(pollNextJsServer, 1000);
+            } else {
+              if (!hasResolved) {
+                console.error('Next.js server polling timed out');
+                reject(new Error('Failed to connect to Next.js server after multiple attempts'));
+              }
+            }
+          }).on('error', (err) => {
+            console.log(`Connection error: ${err.message}`);
+            if (pollAttempts < maxPollAttempts) {
+              setTimeout(pollNextJsServer, 1000);
+            } else {
+              if (!hasResolved) {
+                console.error('Next.js server polling timed out after connection errors');
+                reject(new Error('Failed to connect to Next.js server after multiple attempts'));
+              }
+            }
+          });
+        } else if (nextJsReady) {
+          // If we've seen ready message but don't have a port yet
+          resolveOnce();
+        } else if (pollAttempts < maxPollAttempts) {
+          setTimeout(pollNextJsServer, 1000);
+        } else {
+          if (!hasResolved) {
+            console.error('Next.js server polling timed out, no port detected');
+            reject(new Error('Failed to detect Next.js server port'));
+          }
         }
-        reject(new Error('Failed to start Next.js server within timeout period'));
       }
-    }, 15000); // Increased timeout slightly to 15s
+      
+      // Start polling
+      pollNextJsServer();
+      
+    }, 5000); // Wait 5 seconds before starting to poll
   });
 }
 
