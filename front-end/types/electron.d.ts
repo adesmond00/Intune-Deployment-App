@@ -6,7 +6,7 @@ interface ElectronAPI {
   /**
    * Flag indicating if the app is running in Electron
    */
-  isElectron: boolean;
+  readonly isElectron: boolean;
   
   /**
    * Login with Graph API credentials
@@ -39,6 +39,11 @@ interface ElectronAPI {
    * Remove event listeners for specified channel
    */
   removeAllListeners: (channel: string) => void;
+  
+  /**
+   * Get the value from the store
+   */
+  getStoreValue: (key: string) => Promise<any>;
 }
 
 interface Window {

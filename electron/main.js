@@ -263,6 +263,19 @@ function handlePageLoaded() {
   return isLoggedIn; // Return the status
 }
 
+// Add IPC handler to get values from the store
+ipcMain.handle('get-store-value', (event, key) => {
+  console.log(`IPC: Received get-store-value request for key: ${key}`); // Log request
+  try {
+    const value = store.get(key);
+    console.log(`IPC: Returning value for ${key}: ${value}`); // Log value
+    return value;
+  } catch (error) {
+    console.error(`IPC: Error getting store value for key ${key}:`, error);
+    return undefined; // Or handle error appropriately
+  }
+});
+
 // Function to find an available port
 async function findAvailablePort(startPort, endPort = startPort + 100) {
   // Keep track of ports we've already tried and failed with

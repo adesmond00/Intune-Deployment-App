@@ -24,6 +24,7 @@ interface ElectronAPI {
   onShowLogin: (callback: () => void) => void;
   onApiLog: (callback: (message: string) => void) => void;
   removeAllListeners: (channel: string) => void;
+  getStoreValue: (key: string) => Promise<any>;
 }
 
 // Extend Window interface to include our custom electronAPI property
@@ -61,31 +62,56 @@ export default function Home() {
       console.log("Electron environment detected, setting up event listeners");
       
       // Setup Electron event listeners
-      electron.onShowLogin(() => {
-        console.log("Received show-login event, showing login screen");
-        setShowLogin(true);
-        setLoading(false);
-      });
+      if (window.electronAPI) {
+        window.electronAPI.onShowLogin(() => {
+          console.log("Received show-login event, showing login screen");
+          console.log("Renderer received show-login event");
+          setShowLogin(true);
+          setLoading(false);
+        });
+      }
       
-      electron.onApiReady((port) => {
-        console.log("Received api-ready event with port:", port);
-        setShowLogin(false);
-        setApiError(null);
-        setLoading(false);
-      });
+      if (window.electronAPI) {
+        window.electronAPI.onApiReady((port) => {
+          console.log("Received api-ready event with port:", port);
+          setShowLogin(false);
+          setApiError(null);
+          setLoading(false);
+        });
+      }
       
-      electron.onApiError((message) => {
-        console.error("Received api-error event:", message);
-        setApiError(message);
-        setLoading(false);
-      });
+      if (window.electronAPI) {
+        window.electronAPI.onApiError((message) => {
+          console.error("Received api-error event:", message);
+          setApiError(message);
+          setLoading(false);
+        });
+      }
+      
+      if (window.electronAPI) {
+        window.electronAPI.getStoreValue('isLoggedIn')
+          .then((isLoggedIn: boolean | undefined) => {
+            console.log(`Renderer received isLoggedIn: ${isLoggedIn}`);
+            if (isLoggedIn) {
+              console.log('Setting state: loading=false, showLogin=false');
+              setLoading(false);
+              setShowLogin(false);
+            } else {
+              console.log('Setting state: loading=false, showLogin=true');
+              setLoading(false);
+              setShowLogin(true);
+            }
+          });
+      }
       
       // Clean up listeners on component unmount
       return () => {
         console.log("Cleaning up Electron event listeners");
-        electron.removeAllListeners('show-login');
-        electron.removeAllListeners('api-ready');
-        electron.removeAllListeners('api-error');
+        if (window.electronAPI) {
+          window.electronAPI.removeAllListeners('show-login');
+          window.electronAPI.removeAllListeners('api-ready');
+          window.electronAPI.removeAllListeners('api-error');
+        }
       };
     } else {
       // In browser mode, just show the dashboard
@@ -119,7 +145,12 @@ export default function Home() {
   // In Electron mode, show login if needed
   if (isElectron && showLogin) {
     console.log("Rendering login screen");
-    return <LoginScreen />;
+    return <LoginScreen onLoginSuccess={() => {
+      console.log("Login successful, updating state");
+      setLoading(false);
+      setShowLogin(false);
+      setApiError(null);
+    }} />;
   }
 
   // Default: show dashboard
