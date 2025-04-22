@@ -235,20 +235,24 @@ function handlePageLoaded() {
 
 // Function to find an available port
 async function findAvailablePort(startPort, endPort = startPort + 100) {
+  // Keep track of ports we've already tried and failed with
+  const failedPorts = new Set();
+  
   for (let port = startPort; port <= endPort; port++) {
+    // Skip ports we already know have failed
+    if (failedPorts.has(port)) {
+      continue;
+    }
+    
     try {
-      // Check if port is available using Node's net module
-      await new Promise((resolve, reject) => {
+      // More robust check for port availability
+      const isAvailable = await new Promise((resolve) => {
         const testServer = require('net').createServer();
         
         testServer.once('error', (err) => {
-          if (err.code === 'EADDRINUSE') {
-            // Port is in use
-            resolve(false);
-          } else {
-            // Other error
-            reject(err);
-          }
+          // Port is in use or there's some other error
+          testServer.close();
+          resolve(false);
         });
         
         testServer.once('listening', () => {
@@ -256,21 +260,41 @@ async function findAvailablePort(startPort, endPort = startPort + 100) {
           testServer.close(() => resolve(true));
         });
         
-        testServer.listen(port, '127.0.0.1');
+        // Use a short timeout to detect if binding fails
+        setTimeout(() => {
+          try {
+            testServer.close();
+          } catch (e) {}
+          resolve(false);
+        }, 500);
+        
+        // Try to listen on the port - important to use 127.0.0.1 instead of 0.0.0.0
+        // as 0.0.0.0 might give false positives
+        try {
+          testServer.listen(port, '127.0.0.1');
+        } catch (err) {
+          resolve(false);
+        }
       });
       
-      // If we got here, the port is available
-      console.log(`Found available port: ${port}`);
-      return port;
+      if (isAvailable) {
+        console.log(`Found available port: ${port}`);
+        return port;
+      } else {
+        console.log(`Port ${port} is not available, trying next port`);
+        // Add to failed ports so we don't retry it
+        failedPorts.add(port);
+      }
     } catch (error) {
       console.error(`Error checking port ${port}:`, error);
-      // Continue to the next port
+      // Add to failed ports
+      failedPorts.add(port);
     }
   }
   
-  // If we exhausted all ports, return the default
-  console.warn(`No available ports found in range ${startPort}-${endPort}, using default`);
-  return startPort;
+  // If we exhausted all ports, increment higher
+  console.warn(`No available ports found in range ${startPort}-${endPort}, trying higher range`);
+  return findAvailablePort(endPort + 1, endPort + 100);
 }
 
 async function startPythonApi() {
