@@ -197,6 +197,23 @@ def _commit_file(app_id: str, version_id: str, file_id: str, meta: Dict):
     )
 
 
+def _commit_content_version(app_id: str, version_id: str):
+    """
+    Finalize the content version after all files are committed.
+    Without this call the mobileApp remains 'notPublished'.
+    """
+    logger.info("Committing content version %s to the mobileApp…", version_id)
+    body = {
+        "@odata.type": "#microsoft.graph.win32LobApp",
+        "committedContentVersion": version_id
+    }
+    _graph_request(
+        "PATCH",
+        f"{GRAPH_BASE}/deviceAppManagement/mobileApps/{app_id}",
+        json=body
+    )
+
+
 def _wait_for_commit(app_id: str, version_id: str, file_id: str, timeout=600):
     url = (f"{GRAPH_BASE}/deviceAppManagement/mobileApps/{app_id}"
            f"/microsoft.graph.win32LobApp/contentVersions/{version_id}/files/{file_id}")
@@ -218,6 +235,31 @@ def _wait_for_commit(app_id: str, version_id: str, file_id: str, timeout=600):
             return
         time.sleep(10)
     raise TimeoutError("Timed out waiting for file commit")
+
+
+# --------------------------------------------------------------------------------------
+# 3.  ── upload helper (Azure BlockBlob over raw HTTP – no SDK dependency)
+# --------------------------------------------------------------------------------------
+
+def _wait_for_published(app_id: str, timeout=900):
+    """
+    Poll the mobileApp object until Intune finishes backend processing
+    (publishingState == 'published') or until timeout is reached.
+    """
+    url = f"{GRAPH_BASE}/deviceAppManagement/mobileApps/{app_id}"
+    logger.info("Waiting for Intune to publish the app …")
+    for _ in range(timeout // 10):
+        data = _graph_request("GET", url)  # full object; not all tenants expose processingState
+        logger.info(
+            "Publish poll → publishingState=%s",
+            data.get("publishingState")
+        )
+        logger.debug("Full publish poll payload: %s", json.dumps(data)[:1000])
+        if data.get("publishingState") == "published":
+            logger.info("App is now published and ready!")
+            return
+        time.sleep(10)
+    raise TimeoutError("Timed out waiting for publishingState='published'")
 
 
 # --------------------------------------------------------------------------------------
@@ -277,6 +319,8 @@ def upload_intunewin(
     _upload_to_blob(encrypted, ph["azureStorageUri"])
     _commit_file(app_id, version_id, ph["id"], meta)
     _wait_for_commit(app_id, version_id, ph["id"])
+    _commit_content_version(app_id, version_id)
+    _wait_for_published(app_id)
 
     logger.info("Upload finished successfully. App ID: %s", app_id)
     return app_id
