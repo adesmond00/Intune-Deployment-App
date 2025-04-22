@@ -26,7 +26,8 @@ from typing import Dict, Tuple, Optional
 import requests
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from api.functions.auth import get_auth_headers  # your existing helper
+# Change from absolute import to relative import to fix circular reference
+from .auth import get_auth_headers  # Use relative import
 
 
 logger = logging.getLogger(__name__)
