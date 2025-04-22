@@ -497,19 +497,42 @@ ipcMain.handle('get-api-port', () => {
 
 // Standard Electron app lifecycle events
 app.whenReady().then(async () => {
-  // In development mode, start Next.js server first
+  // Load stored state
+  const isLoggedIn = store.get('isLoggedIn');
+  const graphCredentials = store.get('graphCredentials');
+
+  // Set up IPC handlers
+  // setupIpcHandlers(); // Removed this line as setupIpcHandlers is not defined
+
+  // Start Next.js dev server if in development
   if (process.env.NODE_ENV === 'development') {
     try {
       await startNextDevServer();
     } catch (error) {
       console.error('Failed to start Next.js server:', error);
-      // Continue anyway, the window will display an error message
+      // Optionally handle error, e.g., show error in the window
     }
   }
   
   createWindow();
 
+  // Start Python API if logged in
+  if (isLoggedIn && graphCredentials) {
+    console.log('App ready, starting API with stored credentials');
+    try {
+      // Find port *before* starting API
+      const initialApiPort = await findAvailablePort(8000);
+      await startPythonApi(initialApiPort); // Pass the found port
+    } catch (error) {
+      console.error('Failed to find available port or start Python API:', error);
+      // Handle error appropriately, maybe show an error message in the window
+    }
+  } else {
+    console.log('App ready, user not logged in or missing credentials');
+  }
+
   app.on('activate', function () {
+    // On macOS it's common to re-create a window in the app when the
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
@@ -528,13 +551,3 @@ app.on('before-quit', () => {
     nextProcess.kill();
   }
 });
-
-// Start Python API if logged in
-if (store.get('isLoggedIn')) {
-  console.log('App ready, starting API with stored credentials');
-  // Find port *before* starting API
-  const initialApiPort = await findAvailablePort(8000);
-  await startPythonApi(initialApiPort); // Pass the found port
-} else {
-  console.log('App ready, user not logged in');
-}
