@@ -309,7 +309,7 @@ export function WingetDeploymentPage() {
 
       // Prepare request payload
       const payload: UploadRequest = {
-        path: `${apiUrlBase}/${INTUNEWIN_PATH}`, // Use dynamic API base URL
+        path: INTUNEWIN_PATH, // Use just the file path, not the full URL
         display_name: app.name,
         package_id: app.id,
         publisher: app.customPublisher || app.publisher,
