@@ -1,5 +1,5 @@
 // Electron main process file
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, net } = require('electron');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
@@ -25,7 +25,7 @@ const store = new Store({
 let pythonProcess = null;
 let mainWindow = null;
 let apiStarted = false;
-let apiPort = 8000;
+let apiPort = 8000; // Default port, will be dynamically assigned
 let nextProcess = null;
 let nextJsPort = 3000; // Default port, will be updated if it changes
 
@@ -233,6 +233,46 @@ function handlePageLoaded() {
   }
 }
 
+// Function to find an available port
+async function findAvailablePort(startPort, endPort = startPort + 100) {
+  for (let port = startPort; port <= endPort; port++) {
+    try {
+      // Check if port is available using Node's net module
+      await new Promise((resolve, reject) => {
+        const testServer = require('net').createServer();
+        
+        testServer.once('error', (err) => {
+          if (err.code === 'EADDRINUSE') {
+            // Port is in use
+            resolve(false);
+          } else {
+            // Other error
+            reject(err);
+          }
+        });
+        
+        testServer.once('listening', () => {
+          // Port is available, close the server
+          testServer.close(() => resolve(true));
+        });
+        
+        testServer.listen(port, '127.0.0.1');
+      });
+      
+      // If we got here, the port is available
+      console.log(`Found available port: ${port}`);
+      return port;
+    } catch (error) {
+      console.error(`Error checking port ${port}:`, error);
+      // Continue to the next port
+    }
+  }
+  
+  // If we exhausted all ports, return the default
+  console.warn(`No available ports found in range ${startPort}-${endPort}, using default`);
+  return startPort;
+}
+
 async function startPythonApi() {
   if (apiStarted) {
     console.log('API already started');
@@ -283,6 +323,15 @@ async function startPythonApi() {
     apiDirectory = path.join(__dirname, '../api');
   }
 
+  // Find an available port for the API
+  try {
+    apiPort = await findAvailablePort(8000);
+    console.log(`Using API port: ${apiPort}`);
+  } catch (error) {
+    console.error('Error finding available port:', error);
+    // Continue with default port
+  }
+  
   // Run uvicorn directly instead of the Python script
   console.log(`Starting Python API with uvicorn from directory: ${apiDirectory}`);
 
@@ -320,16 +369,39 @@ async function startPythonApi() {
     });
 
     pythonProcess.stderr.on('data', (data) => {
-      console.error(`API stderr: ${data}`);
+      const output = data.toString();
+      console.error(`API stderr: ${output}`);
+      
+      // Check for port error message and retry with a different port
+      if (output.includes('error while attempting to bind on address') && 
+          output.includes('only one usage of each socket address')) {
+        console.log('Port already in use, retrying with a different port');
+        if (pythonProcess) {
+          pythonProcess.kill();
+          pythonProcess = null;
+        }
+        
+        // Small delay before retrying
+        setTimeout(async () => {
+          apiPort = await findAvailablePort(apiPort + 1);
+          apiStarted = false;
+          startPythonApi();
+        }, 1000);
+        
+        return;
+      }
+      
       if (mainWindow) {
-        mainWindow.webContents.send('api-log', `Error: ${data}`);
+        mainWindow.webContents.send('api-log', `Error: ${output}`);
       }
     });
 
     pythonProcess.on('close', (code) => {
       console.log(`API process exited with code ${code}`);
       apiStarted = false;
-      if (code !== 0 && mainWindow) {
+      
+      // Don't show error if we're retrying with a different port
+      if (code !== 0 && mainWindow && !output.includes('error while attempting to bind on address')) {
         mainWindow.webContents.send('api-error', `API process exited with code ${code}`);
       }
     });
@@ -394,6 +466,11 @@ ipcMain.handle('logout', async () => {
     mainWindow.webContents.send('show-login');
   }
   return { success: true };
+});
+
+// Handle getApiPort request from renderer
+ipcMain.handle('get-api-port', () => {
+  return apiPort;
 });
 
 // Standard Electron app lifecycle events

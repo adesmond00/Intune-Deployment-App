@@ -1,28 +1,37 @@
-// Electron preload script
+// Preload script that will be executed in the renderer process
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Log that preload script is running
+// Log when the preload script starts and finishes
 console.log('Preload script executing...');
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld(
-  'electronAPI', {
-    isElectron: true, // Add flag to explicitly detect Electron environment
-    login: (credentials) => ipcRenderer.invoke('login', credentials),
-    logout: () => ipcRenderer.invoke('logout'),
-    onApiReady: (callback) => ipcRenderer.on('api-ready', (_, port) => callback(port)),
-    onApiError: (callback) => ipcRenderer.on('api-error', (_, message) => callback(message)),
-    onApiLog: (callback) => ipcRenderer.on('api-log', (_, message) => callback(message)),
-    onShowLogin: (callback) => ipcRenderer.on('show-login', () => {
-      console.log('Show login event received in preload');
-      callback();
-    }),
-    removeAllListeners: (channel) => {
-      ipcRenderer.removeAllListeners(channel);
-    }
+// Expose Electron APIs and additional data to the renderer process
+contextBridge.exposeInMainWorld('electronAPI', {
+  // Flag to check if running in Electron
+  isElectron: true,
+  
+  // Authentication functions
+  login: (credentials) => ipcRenderer.invoke('login', credentials),
+  logout: () => ipcRenderer.invoke('logout'),
+  
+  // Event listeners
+  onApiReady: (callback) => {
+    ipcRenderer.on('api-ready', (event, port) => callback(port));
+  },
+  onApiError: (callback) => {
+    ipcRenderer.on('api-error', (event, message) => callback(message));
+  },
+  onApiLog: (callback) => {
+    ipcRenderer.on('api-log', (event, message) => callback(message));
+  },
+  onShowLogin: (callback) => {
+    ipcRenderer.on('show-login', () => callback());
+  },
+  
+  // Get current API port, if available
+  getApiPort: () => ipcRenderer.invoke('get-api-port'),
+  removeAllListeners: (channel) => {
+    ipcRenderer.removeAllListeners(channel);
   }
-);
+});
 
-// Log that preload script has completed
 console.log('Preload script completed, exposed electronAPI with isElectron=true');

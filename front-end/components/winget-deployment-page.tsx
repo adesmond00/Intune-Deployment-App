@@ -20,7 +20,7 @@ import {
   CheckCircle,
   XCircle,
 } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -118,6 +118,36 @@ export function WingetDeploymentPage() {
   const [currentDeployingApp, setCurrentDeployingApp] = useState<string | null>(null)
   const [deploymentError, setDeploymentError] = useState<string | null>(null)
 
+  // State for dynamic API URL
+  const [apiUrlBase, setApiUrlBase] = useState<string>(API_BASE_URL)
+
+  useEffect(() => {
+    // Check if we're running in Electron
+    if (typeof window !== "undefined" && window.electronAPI) {
+      // Get current API port
+      window.electronAPI.getApiPort().then((port: number) => {
+        setApiUrlBase(`http://127.0.0.1:${port}`);
+        console.log(`Set API URL base to: http://127.0.0.1:${port}`);
+      }).catch((err: any) => {
+        console.error('Failed to get API port:', err);
+        // Fall back to default port
+      });
+      
+      // Listen for API ready events (in case port changes)
+      window.electronAPI.onApiReady((port: number) => {
+        setApiUrlBase(`http://127.0.0.1:${port}`);
+        console.log(`Updated API URL base to: http://127.0.0.1:${port}`);
+      });
+      
+      // Cleanup listener on unmount
+      return () => {
+        if (window.electronAPI.removeAllListeners) {
+          window.electronAPI.removeAllListeners('api-ready');
+        }
+      };
+    }
+  }, []);
+
   /**
    * Fetches search results from the API
    *
@@ -126,7 +156,7 @@ export function WingetDeploymentPage() {
    */
   const fetchSearchResults = async (query: string): Promise<WingetApp[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/search?search_term=${encodeURIComponent(query)}`)
+      const response = await fetch(`${apiUrlBase}/search?search_term=${encodeURIComponent(query)}`)
 
       if (!response.ok) {
         throw new Error(`Search failed with status: ${response.status}`)
@@ -293,7 +323,7 @@ export function WingetDeploymentPage() {
       }
 
       // Make API request
-      const response = await fetch(`${API_BASE_URL}/apps`, {
+      const response = await fetch(`${apiUrlBase}/apps`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
