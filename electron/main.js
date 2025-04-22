@@ -1,7 +1,7 @@
 // Electron main process file
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const Store = require('electron-store');
 
@@ -26,6 +26,73 @@ let pythonProcess = null;
 let mainWindow = null;
 let apiStarted = false;
 let apiPort = 8000;
+let nextProcess = null;
+
+// Start the Next.js development server
+function startNextDevServer() {
+  console.log('Starting Next.js development server...');
+  
+  // Check if we're in development mode
+  if (process.env.NODE_ENV !== 'development') {
+    console.log('Not in development mode, skipping Next.js server start');
+    return Promise.resolve();
+  }
+  
+  return new Promise((resolve, reject) => {
+    // Define the path to the Next.js directory
+    const nextJsPath = path.join(__dirname, '..', 'front-end');
+    
+    // Start Next.js dev server
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    nextProcess = spawn(npmCmd, ['run', 'dev'], { 
+      cwd: nextJsPath,
+      shell: true,
+      stdio: 'pipe'
+    });
+    
+    console.log('Next.js dev server process started');
+    
+    // Listen for stdout to determine when server is ready
+    let serverOutput = '';
+    let serverStarted = false;
+    
+    nextProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      serverOutput += output;
+      console.log(`Next.js stdout: ${output}`);
+      
+      // Check if server is ready
+      if (output.includes('ready started server') || 
+          output.includes('Local:') ||
+          output.includes('started server on') ||
+          output.includes('localhost:3000')) {
+        console.log('Next.js server detected as ready');
+        serverStarted = true;
+        resolve();
+      }
+    });
+    
+    nextProcess.stderr.on('data', (data) => {
+      console.error(`Next.js stderr: ${data}`);
+    });
+    
+    // Handle errors
+    nextProcess.on('error', (err) => {
+      console.error('Failed to start Next.js server:', err);
+      reject(err);
+    });
+    
+    // Set timeout to resolve anyway if taking too long but seems to be running
+    setTimeout(() => {
+      if (!serverStarted && nextProcess && !nextProcess.killed) {
+        console.log('Next.js server taking longer than expected, but proceeding anyway');
+        resolve();
+      } else if (!serverStarted) {
+        reject(new Error('Failed to start Next.js server within timeout period'));
+      }
+    }, 10000);
+  });
+}
 
 function createWindow() {
   // Create the browser window
@@ -42,30 +109,75 @@ function createWindow() {
 
   // If in development, load from Next.js dev server
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:3000');
-    // Open DevTools in development mode
-    mainWindow.webContents.openDevTools();
+    // Wait for the server to be ready before loading the URL
+    console.log('Waiting for Next.js server to be ready...');
+    
+    // Poll until the server is ready
+    let attempts = 0;
+    const maxAttempts = 30;
+    const pollInterval = 1000; // 1 second
+    
+    function pollServer() {
+      console.log(`Polling Next.js server, attempt ${attempts + 1}/${maxAttempts}`);
+      
+      // Try a simple HTTP request to check if server is responding
+      require('http').get('http://localhost:3000', (response) => {
+        console.log(`Next.js server responded with status: ${response.statusCode}`);
+        if (response.statusCode === 200) {
+          console.log('Next.js server is ready, loading URL');
+          mainWindow.loadURL('http://localhost:3000');
+          
+          // Open DevTools in development mode
+          mainWindow.webContents.openDevTools();
+          
+          // Check login status once page is loaded
+          mainWindow.webContents.on('did-finish-load', () => {
+            handlePageLoaded();
+          });
+        } else {
+          retryOrFail();
+        }
+      }).on('error', (err) => {
+        console.error(`Next.js server poll failed: ${err.message}`);
+        retryOrFail();
+      });
+      
+      function retryOrFail() {
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(pollServer, pollInterval);
+        } else {
+          console.error('Failed to connect to Next.js server after maximum attempts');
+          mainWindow.loadFile(path.join(__dirname, 'error.html'));
+        }
+      }
+    }
+    
+    pollServer();
   } else {
     // In production, load from built Next.js export
     mainWindow.loadFile(path.join(__dirname, '../front-end/out/index.html'));
+    mainWindow.webContents.on('did-finish-load', () => {
+      handlePageLoaded();
+    });
   }
+}
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    // Check if logged in
-    const isLoggedIn = store.get('isLoggedIn', false);
-    
-    console.log('App loaded, isLoggedIn:', isLoggedIn);
-    
-    if (!isLoggedIn) {
-      console.log('Sending show-login event to renderer');
-      // Force show login by sending event to renderer
-      mainWindow.webContents.send('show-login');
-    } else {
-      // If logged in, start API with stored credentials
-      console.log('Starting API with stored credentials');
-      startPythonApi();
-    }
-  });
+function handlePageLoaded() {
+  // Check if logged in
+  const isLoggedIn = store.get('isLoggedIn', false);
+  
+  console.log('App loaded, isLoggedIn:', isLoggedIn);
+  
+  if (!isLoggedIn) {
+    console.log('Sending show-login event to renderer');
+    // Force show login by sending event to renderer
+    mainWindow.webContents.send('show-login');
+  } else {
+    // If logged in, start API with stored credentials
+    console.log('Starting API with stored credentials');
+    startPythonApi();
+  }
 }
 
 async function startPythonApi() {
@@ -219,7 +331,17 @@ ipcMain.handle('logout', async () => {
 });
 
 // Standard Electron app lifecycle events
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // In development mode, start Next.js server first
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      await startNextDevServer();
+    } catch (error) {
+      console.error('Failed to start Next.js server:', error);
+      // Continue anyway, the window will display an error message
+    }
+  }
+  
   createWindow();
 
   app.on('activate', function () {
@@ -231,9 +353,13 @@ app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Clean up Python process on exit
+// Clean up processes on exit
 app.on('before-quit', () => {
   if (pythonProcess) {
     pythonProcess.kill();
+  }
+  
+  if (nextProcess) {
+    nextProcess.kill();
   }
 });
