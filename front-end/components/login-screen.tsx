@@ -25,18 +25,25 @@ export function LoginScreen() {
 
   // Check if we're running in Electron
   useEffect(() => {
-    setIsElectron(!!window.electronAPI);
+    const electron = window.electronAPI;
+    console.log("LoginScreen: Checking for Electron environment", !!electron);
+    setIsElectron(!!electron);
     
     // Setup listeners for Electron events
-    if (window.electronAPI) {
-      window.electronAPI.onShowLogin(() => {
-        // Reset any state if needed when login is shown
+    if (electron) {
+      console.log("LoginScreen: Setting up Electron event listeners");
+      
+      electron.onApiError((message) => {
+        console.error("LoginScreen: Received API error:", message);
+        setError(message);
+        setIsLoading(false);
       });
       
       // Clean up listeners on component unmount
       return () => {
-        if (window.electronAPI) {
-          window.electronAPI.removeAllListeners('show-login');
+        console.log("LoginScreen: Cleaning up event listeners");
+        if (electron) {
+          electron.removeAllListeners('api-error');
         }
       };
     }
@@ -44,6 +51,8 @@ export function LoginScreen() {
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    
+    console.log("LoginScreen: Login attempt");
     
     if (!clientId || !clientSecret || !tenantId) {
       setError("All fields are required");
@@ -55,6 +64,8 @@ export function LoginScreen() {
     
     try {
       if (isElectron && window.electronAPI) {
+        console.log("LoginScreen: Submitting credentials to Electron");
+        
         // Use Electron's IPC for login
         const result = await window.electronAPI.login({
           clientId,
@@ -62,25 +73,26 @@ export function LoginScreen() {
           tenantId
         });
         
+        console.log("LoginScreen: Login result:", result);
+        
         if (!result.success) {
           throw new Error(result.message || "Login failed");
         }
         
         // Login successful - Electron main process will handle starting the API
         // and transitioning to the main application
+        console.log("LoginScreen: Login successful");
       } else {
         // This is just a fallback for non-Electron environments (browser testing)
-        // In production, this component is intended for use within Electron only
-        console.warn("Login attempted outside Electron environment - this would not work in production");
+        console.warn("LoginScreen: Login attempted outside Electron environment - this would not work in production");
         setTimeout(() => {
           // Simulate successful login for testing purposes
           window.location.href = "/";
         }, 1500);
       }
     } catch (err) {
-      console.error("Login error:", err);
+      console.error("LoginScreen: Login error:", err);
       setError(err instanceof Error ? err.message : "Authentication failed");
-    } finally {
       setIsLoading(false);
     }
   };
@@ -159,6 +171,7 @@ declare global {
       onApiReady: (callback: () => void) => void;
       onApiError: (callback: (message: string) => void) => void;
       onShowLogin: (callback: () => void) => void;
+      onApiLog: (callback: (message: string) => void) => void;
       removeAllListeners: (channel: string) => void;
     };
   }

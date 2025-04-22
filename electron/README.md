@@ -8,7 +8,7 @@ This directory contains the Electron wrapper for the Intune Deployment App, whic
 - Embedded Python runtime and required packages
 - Secure credential storage for Microsoft Graph API authentication
 - Unified login interface that replaces `.env` configuration
-- No separate API/frontend processes to manage
+- No separate API/frontend processes to manage - everything runs in one package
 
 ## Development Setup
 
@@ -18,31 +18,53 @@ This directory contains the Electron wrapper for the Intune Deployment App, whic
 - npm or yarn
 - Python 3.8+ (for development only)
 
-### Running in Development Mode
+### Initial Setup Process
 
-1. Install dependencies:
+1. Install frontend dependencies:
 
 ```bash
-# Install frontend dependencies
-cd ../front-end
-npm install
-
-# Install Electron dependencies
-cd ../electron
+# Navigate to the frontend directory
+cd /home/coder/Intune-Deployment-App/front-end
 npm install
 ```
 
-2. Start the application in development mode:
+2. Install Electron dependencies:
 
 ```bash
+# Navigate to the electron directory
+cd /home/coder/Intune-Deployment-App/electron
+npm install
+```
+
+### Running in Development Mode
+
+After completing the initial setup, you can run the application in development mode from the electron directory:
+
+```bash
+# Make sure you're in the electron directory
+cd /home/coder/Intune-Deployment-App/electron
+
 # Start the application with hot-reloading
 npm run dev
 ```
 
-This will:
-- Start the Next.js dev server on port 3000
-- Launch Electron pointing to the dev server
-- Load the Python API dynamically based on login credentials
+This single command will:
+- Start the Next.js dev server for the frontend
+- Launch Electron, which loads the frontend from the dev server
+- Show the login screen to enter Microsoft Graph credentials
+- After successful login, automatically start the Python API with your credentials
+- Switch to the main application interface
+
+You do NOT need to separately start the frontend or API - the Electron wrapper handles this automatically.
+
+## Troubleshooting Development
+
+If you encounter issues during development:
+
+1. Check that both Next.js and Electron dependencies are installed
+2. Ensure Python and required packages are available
+3. Look for error messages in the Electron console (opened automatically in dev mode)
+4. Verify your Microsoft Graph API credentials are correct
 
 ## Building for Production
 

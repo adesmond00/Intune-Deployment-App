@@ -43,29 +43,44 @@ function createWindow() {
   // If in development, load from Next.js dev server
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:3000');
+    // Open DevTools in development mode
     mainWindow.webContents.openDevTools();
   } else {
     // In production, load from built Next.js export
     mainWindow.loadFile(path.join(__dirname, '../front-end/out/index.html'));
   }
 
-  // Check if logged in and show login screen if not
-  const isLoggedIn = store.get('isLoggedIn', false);
-  if (!isLoggedIn) {
-    mainWindow.webContents.on('did-finish-load', () => {
+  mainWindow.webContents.on('did-finish-load', () => {
+    // Check if logged in
+    const isLoggedIn = store.get('isLoggedIn', false);
+    
+    console.log('App loaded, isLoggedIn:', isLoggedIn);
+    
+    if (!isLoggedIn) {
+      console.log('Sending show-login event to renderer');
+      // Force show login by sending event to renderer
       mainWindow.webContents.send('show-login');
-    });
-  } else {
-    startPythonApi();
-  }
+    } else {
+      // If logged in, start API with stored credentials
+      console.log('Starting API with stored credentials');
+      startPythonApi();
+    }
+  });
 }
 
 async function startPythonApi() {
-  if (apiStarted) return;
+  if (apiStarted) {
+    console.log('API already started');
+    return;
+  }
 
   const credentials = store.get('credentials');
   if (!credentials) {
     console.error('No credentials found. Cannot start API.');
+    if (mainWindow) {
+      mainWindow.webContents.send('api-error', 'No credentials found. Please log in again.');
+      mainWindow.webContents.send('show-login');
+    }
     return;
   }
 
@@ -77,29 +92,35 @@ async function startPythonApi() {
     GRAPH_TENANT_ID: credentials.tenantId
   };
 
+  console.log('Starting API with environment:', {
+    GRAPH_CLIENT_ID: credentials.clientId ? '[SET]' : '[NOT SET]',
+    GRAPH_CLIENT_SECRET: credentials.clientSecret ? '[SET]' : '[NOT SET]',
+    GRAPH_TENANT_ID: credentials.tenantId ? '[SET]' : '[NOT SET]'
+  });
+
   // Determine the Python executable path based on environment
   let pythonPath;
-  const resourcesPath = process.resourcesPath;
   
   if (app.isPackaged) {
     // In packaged app, use bundled Python
-    pythonPath = path.join(resourcesPath, 'python', 'python.exe');
+    pythonPath = path.join(process.resourcesPath, 'python', 'python.exe');
   } else {
     // In development, use system Python
-    pythonPath = 'python';
+    pythonPath = process.platform === 'win32' ? 'python' : 'python3';
   }
 
   // Determine the API script path
   let apiScript;
   if (app.isPackaged) {
-    apiScript = path.join(resourcesPath, 'app', 'api', 'api.py');
+    apiScript = path.join(process.resourcesPath, 'app', 'api', 'api.py');
   } else {
     apiScript = path.join(__dirname, '../api/api.py');
   }
 
+  console.log(`Starting Python API with: ${pythonPath} ${apiScript}`);
+
   // Start the Python API
   try {
-    console.log(`Starting Python API with: ${pythonPath} ${apiScript}`);
     pythonProcess = spawn(pythonPath, [apiScript], { 
       env,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -107,15 +128,24 @@ async function startPythonApi() {
 
     // Listen for API output
     pythonProcess.stdout.on('data', (data) => {
-      console.log(`API stdout: ${data}`);
-      if (data.toString().includes('Application startup complete')) {
+      const output = data.toString();
+      console.log(`API stdout: ${output}`);
+      
+      // Check for API startup message
+      if (output.includes('Application startup complete') || output.includes('Uvicorn running on')) {
         apiStarted = true;
-        mainWindow.webContents.send('api-ready');
+        console.log('API started successfully');
+        if (mainWindow) {
+          mainWindow.webContents.send('api-ready', apiPort);
+        }
       }
     });
 
     pythonProcess.stderr.on('data', (data) => {
       console.error(`API stderr: ${data}`);
+      if (mainWindow) {
+        mainWindow.webContents.send('api-log', `Error: ${data}`);
+      }
     });
 
     pythonProcess.on('close', (code) => {
@@ -143,6 +173,12 @@ async function startPythonApi() {
 // Handle login from renderer
 ipcMain.handle('login', async (event, credentials) => {
   try {
+    console.log('Login request received with credentials:', {
+      clientId: credentials.clientId ? '[PROVIDED]' : '[MISSING]',
+      clientSecret: credentials.clientSecret ? '[PROVIDED]' : '[MISSING]',
+      tenantId: credentials.tenantId ? '[PROVIDED]' : '[MISSING]'
+    });
+
     // Validate credentials
     if (!credentials.clientId || !credentials.clientSecret || !credentials.tenantId) {
       return { success: false, message: 'All fields are required' };
@@ -152,6 +188,7 @@ ipcMain.handle('login', async (event, credentials) => {
     store.set('credentials', credentials);
     store.set('isLoggedIn', true);
 
+    console.log('Credentials stored, starting Python API');
     // Start the Python API
     await startPythonApi();
     
@@ -175,7 +212,9 @@ ipcMain.handle('logout', async () => {
   }
   
   // Reload app to show login screen
-  mainWindow.webContents.send('show-login');
+  if (mainWindow) {
+    mainWindow.webContents.send('show-login');
+  }
   return { success: true };
 });
 
