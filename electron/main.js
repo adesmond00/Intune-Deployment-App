@@ -1,7 +1,7 @@
 // Electron main process file
 const { app, BrowserWindow, ipcMain, net } = require('electron');
 const path = require('path');
-const { spawn, execSync } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 const fs = require('fs');
 const Store = require('electron-store');
 
@@ -46,6 +46,7 @@ function startNextDevServer() {
     
     // Try to start with a specific range of ports
     const initialPort = 3030; // Start from a different port than the default Next.js
+    nextJsPort = initialPort;  // ensure global port matches the first attempt
     
     // Build the command with the specified port
     let nextCommand = 'npm run dev';
@@ -851,6 +852,7 @@ ipcMain.handle('login', async (event, credentials) => {
       // Start the API as a background process
       startPythonApi(portToUse);
       store.set('apiPort', portToUse);
+      apiPort = portToUse;  // update global reference so get-api-port returns the correct value
       
       // Return success to the renderer
       return { success: true };
