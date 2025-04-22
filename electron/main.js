@@ -1,6 +1,11 @@
 // Electron main process file
 const { app, BrowserWindow, ipcMain, net } = require('electron');
 const path = require('path');
+// -------------------  CONFIGURABLE DEFAULTS  -------------------
+// Default port we want Next.js to start on in development.
+// Change this single value if you want to bump the base port later.
+const DEFAULT_NEXT_PORT = 3030;
+// ----------------------------------------------------------------
 const { spawn, exec, execSync } = require('child_process');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -31,7 +36,7 @@ let mainWindow = null;
 let apiStarted = false;
 let apiPort = 8000; // Default port, will be dynamically assigned
 let nextProcess = null;
-let nextJsPort = 3000; // Default port, will be updated if it changes
+let nextJsPort = DEFAULT_NEXT_PORT; // Default port, will be updated if Next.js switches
 
 // Start the Next.js development server
 function startNextDevServer() {
@@ -41,13 +46,13 @@ function startNextDevServer() {
       resolve();
       return;
     }
-    
+
     console.log('Starting Next.js development server...');
-    
-    // Try to start with a specific range of ports
-    const initialPort = 3030; // Start from a different port than the default Next.js
+
+    // Try to start with a specific base port
+    const initialPort = DEFAULT_NEXT_PORT; // Start from a different port than the stock Next.js 3000
     nextJsPort = initialPort;  // ensure global port matches the first attempt
-    
+
     // Build the command with the specified port
     let nextCommand = 'npm run dev';
     if (process.platform === 'win32') {
@@ -56,18 +61,18 @@ function startNextDevServer() {
     } else {
       nextCommand = `PORT=${initialPort} npm run dev`;
     }
-    
+
     nextProcess = spawn(nextCommand, {
       shell: true,
       cwd: path.join(__dirname, '../front-end'),
       env: process.env
     });
-    
+
     console.log('Next.js dev server process started');
-    
+
     // Track whether we've resolved the promise already
     let hasResolved = false;
-    
+
     // Function to resolve the promise once
     const resolveOnce = () => {
       if (!hasResolved) {
@@ -78,18 +83,18 @@ function startNextDevServer() {
         resolve();
       }
     };
-    
+
     nextProcess.stdout.on('data', (data) => {
       const output = data.toString();
       console.log(`Next.js stdout: ${output}`);
-      
+
       // Look for "ready" messages from Next.js
       if (output.includes('ready') || output.includes('Ready')) {
         nextJsReady = true;
         console.log('Next.js server detected as ready');
         resolveOnce();
       }
-      
+
       // Check for the actual port Next.js is running on
       const portMatch = output.match(/http:\/\/localhost:(\d+)/);
       if (portMatch && portMatch[1]) {
@@ -99,55 +104,55 @@ function startNextDevServer() {
         store.set('nextJsPort', detectedPort);
       }
     });
-    
+
     nextProcess.stderr.on('data', (data) => {
       const output = data.toString();
       console.error(`Next.js stderr: ${output}`);
-      
+
       // Also check stderr for port information as Next.js logs port conflicts here
       const portMatch = output.match(/Port (\d+) is in use/);
       if (portMatch && portMatch[1]) {
         console.log(`Port ${portMatch[1]} is in use, Next.js will try another port`);
       }
-      
+
       // Check for fatal errors
-      if (output.includes('Failed to start server') || 
+      if (output.includes('Failed to start server') ||
           output.includes('Error: listen EADDRINUSE')) {
         console.error('Next.js server failed to start due to port conflicts');
       }
     });
-    
+
     nextProcess.on('close', (code) => {
       console.log(`Next.js process exited with code ${code}`);
       nextJsReady = false;
       nextProcess = null;
-      
+
       // Only reject if we haven't resolved yet
       if (code !== 0 && !hasResolved) {
         console.log('Next.js server fail');
         reject(new Error(`Next.js process exited with code ${code}`));
       }
     });
-    
+
     // Set timeout
     const timeoutId = setTimeout(() => {
       // Use a polling approach to check server status
       console.log('Waiting for Next.js server to be ready...');
-      
+
       // Try to poll the server to see if it's up
       let pollAttempts = 0;
       const maxPollAttempts = 30;
-      
+
       function pollNextJsServer() {
         if (hasResolved) return; // Skip if already resolved
-        
+
         pollAttempts++;
         console.log(`Polling Next.js server, attempt ${pollAttempts}/${maxPollAttempts}`);
-        
+
         if (nextJsPort) {
           const url = `http://localhost:${nextJsPort}`;
           console.log(`Attempting to connect to: ${url}`);
-          
+
           // Use http request to check if server is up
           const http = require('http');
           http.get(url, (res) => {
@@ -186,10 +191,10 @@ function startNextDevServer() {
           }
         }
       }
-      
+
       // Start polling
       pollNextJsServer();
-      
+
     }, 5000); // Wait 5 seconds before starting to poll
   });
 }
@@ -997,9 +1002,8 @@ const killExistingNextProcesses = (targetPort) => {
   });
 };
 
-// Kill any existing Next.js processes on startup
-const NEXT_DEV_PORT = 3000;
-killExistingNextProcesses(NEXT_DEV_PORT);
+// Kill any existing Next.js process that might still be hanging on our preferred port
+killExistingNextProcesses(DEFAULT_NEXT_PORT);
 
 // Standard Electron app lifecycle events
 app.on('activate', function () {
