@@ -505,13 +505,31 @@ async function verifyCredentials(credentials) {
         GRAPH_TENANT_ID: credentials.tenantId
       };
       
-      // Find the API script (main.py) in the api directory
+      // Find the API script (api.py) in the api directory
       let apiPath;
+      console.log('Current working directory:', process.cwd());
+      console.log('App path:', app.getAppPath());
+      console.log('__dirname:', __dirname);
+      
+      // Try these paths in order until we find the API file
       const possibleApiPaths = [
-        path.join(__dirname, '..', 'api', 'main.py'),       // Development - relative to electron dir
-        path.join(process.cwd(), 'api', 'main.py'),         // Development - from current working dir
-        path.join(app.getAppPath(), '..', 'api', 'main.py') // Production - relative to app
+        path.join(__dirname, '..', 'api', 'api.py'),          // Development - relative to electron dir
+        path.join(process.cwd(), 'api', 'api.py'),            // Development - from current working dir
+        path.join(app.getAppPath(), '..', 'api', 'api.py'),   // Production - relative to app resources
+        path.join(app.getAppPath(), 'api', 'api.py'),         // Alternative production path
+        path.join(process.cwd(), '..', 'api', 'api.py'),      // One level up from cwd
+        path.resolve('api', 'api.py')                         // Resolve from current module
       ];
+      
+      console.log('Possible API paths:');
+      possibleApiPaths.forEach((p, i) => {
+        try {
+          const exists = fs.existsSync(p);
+          console.log(`  ${i}: ${p} (exists: ${exists})`);
+        } catch (err) {
+          console.log(`  ${i}: ${p} (error checking: ${err.message})`);
+        }
+      });
       
       // Find the first path that exists
       for (const testPath of possibleApiPaths) {
@@ -527,7 +545,7 @@ async function verifyCredentials(credentials) {
       }
       
       if (!apiPath) {
-        console.error('Could not locate API main.py file');
+        console.error('Could not locate API api.py file');
         if (mainWindow) {
           mainWindow.webContents.send('api-error', 'Could not locate the API module. Please check your installation.');
         }
