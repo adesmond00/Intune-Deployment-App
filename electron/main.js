@@ -401,7 +401,7 @@ async function startPythonApi() {
       apiStarted = false;
       
       // Don't show error if we're retrying with a different port
-      if (code !== 0 && mainWindow && !output.includes('error while attempting to bind on address')) {
+      if (code !== 0 && mainWindow) {
         mainWindow.webContents.send('api-error', `API process exited with code ${code}`);
       }
     });
