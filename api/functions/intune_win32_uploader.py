@@ -21,7 +21,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 import requests
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -106,7 +106,9 @@ def _graph_request(method: str, url: str, **kwargs):
     return resp.json() if resp.content else None
 
 
-def _create_app_shell(display_name: str, publisher: str, installer_name: str, package_id: str) -> str:
+def _create_app_shell(display_name: str, description: Optional[str], publisher: str, installer_name: str, package_id: str) -> str:
+    if not description:
+        description = display_name
     # Build install/uninstall command lines based on PackageID and display name
     log_basename = re.sub(r'\W+', '', display_name) or "Package"
     log_file = f"{log_basename}.log"
@@ -120,7 +122,7 @@ def _create_app_shell(display_name: str, publisher: str, installer_name: str, pa
     body = {
         "@odata.type": "#microsoft.graph.win32LobApp",
         "displayName": display_name,
-        "description": display_name,
+        "description": description,
         "publisher": publisher,
         "fileName": installer_name,
         "setupFilePath": installer_name,
@@ -308,6 +310,7 @@ def upload_intunewin(
     path: str | Path,
     display_name: str,
     package_id: str,
+    description: Optional[str] = None,
     publisher: str = "",
 ) -> str:
     """
@@ -315,6 +318,8 @@ def upload_intunewin(
 
     Parameters
     ----------
+    description : str, optional
+        Descriptive text shown in Intune. Defaults to display_name if omitted.
     package_id : str
         The Winget package identifier.
 
@@ -326,7 +331,7 @@ def upload_intunewin(
     intunewin = Path(path).expanduser().resolve()
     meta, encrypted = _parse_detection_xml(intunewin)
 
-    app_id = _create_app_shell(display_name, publisher or "Unknown", meta["file_name"], package_id)
+    app_id = _create_app_shell(display_name, description, publisher or "Unknown", meta["file_name"], package_id)
     logger.info("Created app shell. ID: %s", app_id)
     version_id = _create_content_version(app_id)
     logger.info("Created content version: %s", version_id)

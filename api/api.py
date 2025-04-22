@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from typing import Optional, List, Dict
 # Use relative import since api.py is inside the 'api' directory
 from .functions.winget import search_winget_packages
+from pydantic import BaseModel
+from .functions.intune_win32_uploader import upload_intunewin
 
 app = FastAPI(title="Intune Deployment API")
 
@@ -24,6 +26,47 @@ async def search_applications_json(search_term: str):
         return apps
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Request model for /apps endpoint
+class UploadRequest(BaseModel):
+    path: str
+    display_name: str
+    package_id: str
+    publisher: Optional[str] = None
+    description: Optional[str] = None
+
+
+# Endpoint to upload Win32 .intunewin package to Intune
+@app.post("/apps", response_model=dict, status_code=201)
+async def upload_win32_app(body: UploadRequest):
+    """
+    Upload a Win32 `.intunewin` package to Intune.
+
+    Body parameters
+    ---------------
+    path : str
+        Filesystem path to the .intunewin file on the API host.
+    display_name : str
+        Friendly name to show in Intune.
+    package_id : str
+        Winget package identifier (e.g. "Notepad++.Notepad++").
+    publisher : str, optional
+        Publisher name; defaults to empty if omitted.
+    description : str, optional
+        Descriptive text shown in Intune. Defaults to display_name if omitted.
+    """
+    try:
+        app_id = upload_intunewin(
+            path=body.path,
+            display_name=body.display_name,
+            package_id=body.package_id,
+            description=body.description,
+            publisher=body.publisher or ""
+        )
+        return {"app_id": app_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 if __name__ == "__main__":
     import uvicorn
