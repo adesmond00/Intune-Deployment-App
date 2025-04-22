@@ -4,8 +4,25 @@ from typing import Optional, List, Dict
 from .functions.winget import search_winget_packages
 from pydantic import BaseModel
 from .functions.intune_win32_uploader import upload_intunewin
+# Add this import for CORS
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Intune Deployment API")
+
+# Add CORS middleware configuration
+origins = [
+    "http://localhost:3000",  # Frontend origin (Next.js default)
+    "http://127.0.0.1:3000", # Allow IP address as well
+    # Add any other origins if necessary, e.g., your deployed frontend URL
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # List of origins allowed to make requests
+    allow_credentials=True, # Allow cookies to be included in requests
+    allow_methods=["*"],  # Allow all standard methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
 
 @app.get("/")
 async def root():
