@@ -27,6 +27,7 @@ let mainWindow = null;
 let apiStarted = false;
 let apiPort = 8000;
 let nextProcess = null;
+let nextJsPort = 3000; // Default port, will be updated if it changes
 
 // Start the Next.js development server
 function startNextDevServer() {
@@ -61,11 +62,18 @@ function startNextDevServer() {
       serverOutput += output;
       console.log(`Next.js stdout: ${output}`);
       
+      // Check for port in the server output
+      const portMatch = output.match(/http:\/\/localhost:(\d+)/);
+      if (portMatch && portMatch[1]) {
+        nextJsPort = parseInt(portMatch[1], 10);
+        console.log(`Detected Next.js running on port: ${nextJsPort}`);
+      }
+      
       // Check if server is ready
       if (output.includes('ready started server') || 
           output.includes('Local:') ||
           output.includes('started server on') ||
-          output.includes('localhost:3000')) {
+          output.includes('localhost:')) {
         console.log('Next.js server detected as ready');
         serverStarted = true;
         resolve();
@@ -73,7 +81,15 @@ function startNextDevServer() {
     });
     
     nextProcess.stderr.on('data', (data) => {
-      console.error(`Next.js stderr: ${data}`);
+      const output = data.toString();
+      console.error(`Next.js stderr: ${output}`);
+      
+      // Check for port change message in stderr
+      const portChangeMatch = output.match(/Port (\d+) is in use, trying (\d+) instead/);
+      if (portChangeMatch && portChangeMatch[2]) {
+        nextJsPort = parseInt(portChangeMatch[2], 10);
+        console.log(`Next.js port changed to: ${nextJsPort}`);
+      }
     });
     
     // Handle errors
@@ -120,19 +136,47 @@ function createWindow() {
     function pollServer() {
       console.log(`Polling Next.js server, attempt ${attempts + 1}/${maxAttempts}`);
       
+      // Use the detected port
+      const nextUrl = `http://localhost:${nextJsPort}`;
+      console.log(`Attempting to connect to: ${nextUrl}`);
+      
       // Try a simple HTTP request to check if server is responding
-      require('http').get('http://localhost:3000', (response) => {
+      require('http').get(nextUrl, (response) => {
         console.log(`Next.js server responded with status: ${response.statusCode}`);
         if (response.statusCode === 200) {
           console.log('Next.js server is ready, loading URL');
-          mainWindow.loadURL('http://localhost:3000');
+          
+          // Load the Next.js app
+          mainWindow.loadURL(nextUrl);
           
           // Open DevTools in development mode
           mainWindow.webContents.openDevTools();
           
+          // Set a timeout to check if login screen appears within a reasonable time
+          let loginScreenDetected = false;
+          
           // Check login status once page is loaded
           mainWindow.webContents.on('did-finish-load', () => {
             handlePageLoaded();
+            
+            // Set a timeout to check if the login screen is properly shown
+            setTimeout(() => {
+              if (!loginScreenDetected) {
+                console.log('Login screen not detected within expected time, loading fallback');
+                // If login hasn't been detected, fall back to the static HTML login
+                mainWindow.loadFile(path.join(__dirname, 'fallback.html'));
+              }
+            }, 5000);
+          });
+          
+          // Listen for console logs from the renderer
+          mainWindow.webContents.on('console-message', (event, level, message) => {
+            console.log(`Renderer Console: ${message}`);
+            
+            // Check if login screen is shown
+            if (message.includes('Rendering login screen')) {
+              loginScreenDetected = true;
+            }
           });
         } else {
           retryOrFail();
@@ -148,7 +192,8 @@ function createWindow() {
           setTimeout(pollServer, pollInterval);
         } else {
           console.error('Failed to connect to Next.js server after maximum attempts');
-          mainWindow.loadFile(path.join(__dirname, 'error.html'));
+          // Load the fallback HTML login page
+          mainWindow.loadFile(path.join(__dirname, 'fallback.html'));
         }
       }
     }
@@ -161,6 +206,14 @@ function createWindow() {
       handlePageLoaded();
     });
   }
+  
+  // If we're showing a fallback login, we don't need the handlePageLoaded function
+  // to be called, as the fallback login will call login directly
+  mainWindow.webContents.on('did-navigate', (event, url) => {
+    if (url.includes('fallback.html')) {
+      console.log('Showing fallback login screen');
+    }
+  });
 }
 
 function handlePageLoaded() {
