@@ -245,22 +245,20 @@ function createWindow() {
 }
 
 function handlePageLoaded() {
-  // Check if logged in
+  // We get isLoggedIn for logging purposes, but we'll always show login
   const isLoggedIn = store.get('isLoggedIn', false);
   
   console.log('App loaded, isLoggedIn:', isLoggedIn);
   
-  if (!isLoggedIn) {
-    console.log('Sending show-login event to renderer');
-    // Force show login by sending event to renderer
-    if (mainWindow && !mainWindow.isDestroyed()) { // Check if window exists
-        mainWindow.webContents.send('show-login');
-    }
-  } else {
-    // If logged in, API is already started by app.whenReady
-    console.log('App loaded and user is logged in. API should be running.');
+  // Always show login screen for fresh session approach
+  console.log('Enforcing fresh login for new session');
+  
+  // Force show login by sending event to renderer
+  if (mainWindow && !mainWindow.isDestroyed()) { // Check if window exists
+      mainWindow.webContents.send('show-login');
   }
-  return isLoggedIn; // Return the status
+  
+  return false; // Always return false to indicate a fresh session
 }
 
 // Add IPC handler to get values from the store
@@ -570,7 +568,7 @@ ipcMain.handle('logout', async () => {
   
   // Also kill the Next.js process if in development mode
   if (process.env.NODE_ENV === 'development' && nextProcess) {
-    console.log('Terminating Next.js dev server');
+    console.log('Terminating Next.js dev server process');
     nextProcess.kill();
     nextProcess = null;
   }
@@ -610,7 +608,19 @@ function showErrorPage(errorMessage) {
 
 // Standard Electron app lifecycle events
 app.whenReady().then(async () => {
-  // Load stored state
+  // FORCE RESET: Always start with a clean slate
+  console.log('App starting, forcibly clearing any previous login state');
+  store.set('isLoggedIn', false);
+  store.delete('graphCredentials');
+  
+  // Kill any lingering processes
+  if (pythonProcess) {
+    console.log('Terminating lingering Python API process on startup');
+    pythonProcess.kill();
+    pythonProcess = null;
+  }
+
+  // Load stored state (which should now be reset)
   const isLoggedIn = store.get('isLoggedIn');
   const graphCredentials = store.get('graphCredentials');
 
