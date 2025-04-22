@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 
 import math
 import os
@@ -105,7 +106,17 @@ def _graph_request(method: str, url: str, **kwargs):
     return resp.json() if resp.content else None
 
 
-def _create_app_shell(display_name: str, publisher: str, installer_name: str) -> str:
+def _create_app_shell(display_name: str, publisher: str, installer_name: str, package_id: str) -> str:
+    # Build install/uninstall command lines based on PackageID and display name
+    log_basename = re.sub(r'\W+', '', display_name) or "Package"
+    log_file = f"{log_basename}.log"
+    install_cmd = (
+        f'powershell.exe -executionpolicy bypass '
+        f'-file Winget-InstallPackage.ps1 -mode install '
+        f'-PackageID "{package_id}" -Log "{log_file}"'
+    )
+    uninstall_cmd = install_cmd.replace("-mode install", "-mode uninstall")
+
     body = {
         "@odata.type": "#microsoft.graph.win32LobApp",
         "displayName": display_name,
@@ -113,8 +124,8 @@ def _create_app_shell(display_name: str, publisher: str, installer_name: str) ->
         "publisher": publisher,
         "fileName": installer_name,
         "setupFilePath": installer_name,
-        "installCommandLine": installer_name,
-        "uninstallCommandLine": "echo uninstall‑stub",
+        "installCommandLine": install_cmd,
+        "uninstallCommandLine": uninstall_cmd,
         "applicableArchitectures": "x64",
         "minimumSupportedWindowsRelease": "1607",
         "rules": [
@@ -296,10 +307,16 @@ def _upload_to_blob(payload_file: Path, sas_uri: str, block_size=4 * 1024 * 1024
 def upload_intunewin(
     path: str | Path,
     display_name: str,
+    package_id: str,
     publisher: str = "",
 ) -> str:
     """
     End‑to‑end helper.
+
+    Parameters
+    ----------
+    package_id : str
+        The Winget package identifier.
 
     Returns
     -------
@@ -309,7 +326,7 @@ def upload_intunewin(
     intunewin = Path(path).expanduser().resolve()
     meta, encrypted = _parse_detection_xml(intunewin)
 
-    app_id = _create_app_shell(display_name, publisher or "Unknown", meta["file_name"])
+    app_id = _create_app_shell(display_name, publisher or "Unknown", meta["file_name"], package_id)
     logger.info("Created app shell. ID: %s", app_id)
     version_id = _create_content_version(app_id)
     logger.info("Created content version: %s", version_id)
