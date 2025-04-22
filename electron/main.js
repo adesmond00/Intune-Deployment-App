@@ -274,24 +274,31 @@ async function startPythonApi() {
     pythonPath = process.platform === 'win32' ? 'python' : 'python3';
   }
 
-  // Determine the API script path
-  let apiScript;
+  // Determine the API directory
   let apiDirectory;
   
   if (app.isPackaged) {
-    apiScript = path.join(process.resourcesPath, 'app', 'api', 'api.py');
     apiDirectory = path.join(process.resourcesPath, 'app', 'api');
   } else {
-    apiScript = path.join(__dirname, '../api/api.py');
     apiDirectory = path.join(__dirname, '../api');
   }
 
-  console.log(`Starting Python API with: ${pythonPath} ${apiScript}`);
+  // Run uvicorn directly instead of the Python script
+  console.log(`Starting Python API with uvicorn from directory: ${apiDirectory}`);
 
   // Start the Python API
   try {
-    // We need to run the python script from its directory to make imports work
-    pythonProcess = spawn(pythonPath, [apiScript], { 
+    // Run uvicorn directly to avoid module import issues
+    const args = [
+      '-m', 'uvicorn',
+      'api:app',  // Use the script name directly
+      '--host', '0.0.0.0',
+      '--port', apiPort.toString()
+    ];
+    
+    console.log(`Starting Python API with: ${pythonPath} ${args.join(' ')}`);
+    
+    pythonProcess = spawn(pythonPath, args, { 
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: apiDirectory // Set the current working directory to the API directory
