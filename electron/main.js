@@ -301,187 +301,210 @@ async function findAvailablePort(startPort, endPort = startPort + 100) {
   return findAvailablePort(endPort + 1, endPort + 100);
 }
 
-// Refactored: Accepts port as an argument
-async function startPythonApi(portToUse) {
-  if (apiStarted) {
-    console.log('API already started');
-    return;
-  }
-
-  // Update the global apiPort variable
-  apiPort = portToUse;
-  console.log(`Attempting to start API on port: ${apiPort}`);
-
-  const credentials = store.get('graphCredentials');
-  if (!credentials) {
-    console.error('No credentials found. Cannot start API.');
-    if (mainWindow) {
-      mainWindow.webContents.send('api-error', 'No credentials found. Please log in again.');
-      mainWindow.webContents.send('show-login');
-    }
-    return;
-  }
-
-  // Set environment variables for the Python process
-  const env = {
-    ...process.env,
-    GRAPH_CLIENT_ID: credentials.clientId,
-    GRAPH_CLIENT_SECRET: credentials.clientSecret,
-    GRAPH_TENANT_ID: credentials.tenantId
-  };
-
-  console.log('Starting API with environment:', {
-    GRAPH_CLIENT_ID: credentials.clientId ? '[SET]' : '[NOT SET]',
-    GRAPH_CLIENT_SECRET: credentials.clientSecret ? '[SET]' : '[NOT SET]',
-    GRAPH_TENANT_ID: credentials.tenantId ? '[SET]' : '[NOT SET]'
-  });
-
-  // Determine the Python executable path based on environment
-  let pythonPath;
-  
-  if (app.isPackaged) {
-    // In packaged app, use bundled Python
-    pythonPath = path.join(process.resourcesPath, 'python', 'python.exe');
-  } else {
-    // In development, use system Python
-    pythonPath = process.platform === 'win32' ? 'python' : 'python3';
-  }
-
-  // Determine the API directory
-  let apiDirectory;
-  
-  if (app.isPackaged) {
-    apiDirectory = path.join(process.resourcesPath, 'app', 'api');
-  } else {
-    apiDirectory = path.join(__dirname, '../api');
-  }
-
-  // Run uvicorn directly instead of the Python script
-  console.log(`Starting Python API with uvicorn from directory: ${apiDirectory}`);
-
-  // Start the Python API
+/**
+ * Starts the Python API with the credentials from the store
+ * @param {number} port - Port to start the API on
+ * @returns {ChildProcess} - The Python API process
+ */
+function startPythonApi(port) {
   try {
-    // Run uvicorn directly to avoid module import issues
-    const args = [
-      '-m', 'uvicorn',
-      'api:app',  // Use the script name directly
-      '--host', '0.0.0.0',
-      '--port', apiPort.toString() // Use the determined port
-    ];
+    // Kill any existing Python process before starting a new one
+    if (pythonProcess) {
+      console.log('Killing existing Python API process');
+      pythonProcess.kill();
+      pythonProcess = null;
+    }
     
-    console.log(`Starting Python API with: ${pythonPath} ${args.join(' ')}`);
+    // Find the API path
+    const apiPath = findApiPath();
+    const apiDir = path.dirname(apiPath);
     
-    pythonProcess = spawn(pythonPath, args, { 
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: apiDirectory // Set the current working directory to the API directory
+    // Get credentials from store
+    const credentials = store.get('graphCredentials');
+    
+    if (!credentials) {
+      console.error('No credentials found in store');
+      if (mainWindow) {
+        mainWindow.webContents.send('api-error', 'No credentials found. Please log in again.');
+      }
+      return null;
+    }
+    
+    // Set up environment variables for the API
+    const env = {
+      ...process.env,
+      GRAPH_CLIENT_ID: credentials.clientId,
+      GRAPH_CLIENT_SECRET: credentials.clientSecret,
+      GRAPH_TENANT_ID: credentials.tenantId
+    };
+    
+    console.log('Starting API with environment:', {
+      GRAPH_CLIENT_ID: credentials.clientId ? '[SET]' : '[NOT SET]',
+      GRAPH_CLIENT_SECRET: credentials.clientSecret ? '[SET]' : '[NOT SET]',
+      GRAPH_TENANT_ID: credentials.tenantId ? '[SET]' : '[NOT SET]'
     });
-
-    // Listen for API output
+    
+    console.log(`Starting Python API with uvicorn from directory: ${apiDir}`);
+    const command = `python -m uvicorn api:app --host 0.0.0.0 --port ${port}`;
+    console.log(`Starting Python API with: ${command}`);
+    
+    // Start the Python API
+    pythonProcess = spawn('python', ['-m', 'uvicorn', 'api:app', '--host', '0.0.0.0', '--port', port.toString()], {
+      cwd: apiDir,
+      env: env
+    });
+    
+    let apiStarted = false;
+    let apiErrors = [];
+    
+    // Listen for stdout data
     pythonProcess.stdout.on('data', (data) => {
       const output = data.toString();
       console.log(`API stdout: ${output}`);
       
       // Check for API startup message
-      if (output.includes('Application startup complete') || output.includes('Uvicorn running on')) {
+      if (output.includes('Uvicorn running') || output.includes('Application startup complete')) {
         apiStarted = true;
-        console.log('API started successfully');
+        console.log('API server started successfully');
+        
+        // Signal to the UI that the API is ready
         if (mainWindow) {
-          mainWindow.webContents.send('api-ready', apiPort);
+          mainWindow.webContents.send('api-ready', port);
         }
       }
       
-      // Check for authentication errors in stdout
-      if (output.includes('Authentication failed') || 
-          output.includes('Invalid credentials') ||
-          output.includes('token request failed') ||
-          output.includes('AADSTS') || // Azure AD error codes
-          output.includes('auth error')) {
-        console.error('Authentication error detected in API output');
+      // Check for authentication errors
+      if (output.includes('Authentication failed') || output.includes('Invalid client')) {
+        console.error('API authentication failed');
+        apiErrors.push('Authentication failed: Invalid credentials');
+        
         if (mainWindow) {
-          mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID. Please check your credentials and try again.');
+          mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID.');
         }
       }
     });
-
+    
+    // Listen for stderr data
     pythonProcess.stderr.on('data', (data) => {
       const output = data.toString();
       console.error(`API stderr: ${output}`);
       
-      // Check for port error message and retry with a different port
-      if (output.includes('error while attempting to bind on address') && 
-          output.includes('only one usage of each socket address')) {
-        console.log('Port already in use, retrying with a different port');
-        if (pythonProcess) {
-          pythonProcess.kill();
-          pythonProcess = null;
+      // INFO log messages are not errors
+      if (output.startsWith('INFO:')) {
+        // Check for startup messages in stderr (uvicorn logs to stderr)
+        if (output.includes('Application startup complete') || output.includes('Uvicorn running')) {
+          apiStarted = true;
+          console.log('API server started successfully (from stderr logs)');
+          
+          // Signal to the UI that the API is ready
+          if (mainWindow) {
+            mainWindow.webContents.send('api-ready', port);
+          }
         }
+      } else if (!output.includes('WARNING:')) {
+        // Only add non-warning errors to the error list
+        apiErrors.push(output);
         
-        // Small delay before retrying
-        setTimeout(async () => {
-          // Find the *next* available port starting from the failed one + 1
-          const nextPort = await findAvailablePort(apiPort + 1);
-          apiStarted = false; // Reset status before retry
-          startPythonApi(nextPort); // Retry with the newly found port
-        }, 1000);
+        // Critical errors to notify about
+        if (output.includes('Error') || output.includes('Exception') || output.includes('Failed')) {
+          if (mainWindow) {
+            mainWindow.webContents.send('api-error', `API Error: ${output}`);
+          }
+        }
+      }
+    });
+    
+    // Handle process exit
+    pythonProcess.on('close', (code) => {
+      console.log(`Python API process exited with code ${code}`);
+      
+      // If the API never started successfully
+      if (!apiStarted && code !== 0) {
+        console.error('API failed to start properly');
         
-        return;
+        if (mainWindow) {
+          // Send a clear error message including the errors we collected
+          if (apiErrors.length > 0) {
+            mainWindow.webContents.send('api-error', `API failed to start: ${apiErrors.join(', ')}`);
+          } else {
+            mainWindow.webContents.send('api-error', `API process exited with code ${code}`);
+          }
+        }
       }
       
-      // Check for authentication errors in stderr
-      if (output.includes('Authentication failed') || 
-          output.includes('Invalid credentials') ||
-          output.includes('token request failed') ||
-          output.includes('AADSTS') || // Azure AD error codes
-          output.includes('auth error')) {
-        console.error('Authentication error detected in API output');
-        if (mainWindow) {
-          mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID. Please check your credentials and try again.');
-        }
-      }
+      // Reset the Python process reference
+      pythonProcess = null;
+    });
+    
+    // Add error handler
+    pythonProcess.on('error', (err) => {
+      console.error('Error starting Python API:', err);
       
       if (mainWindow) {
-        mainWindow.webContents.send('api-log', `Error: ${output}`);
+        mainWindow.webContents.send('api-error', `Failed to start API: ${err.message}`);
       }
-    });
-
-    pythonProcess.on('close', (code) => {
-      console.log(`API process exited with code ${code}`);
-      apiStarted = false;
       
-      // Don't show error if we're retrying with a different port
-      if (code !== 0 && mainWindow) {
-        // More descriptive error based on exit code
-        let errorMessage = `API process exited with code ${code}`;
-        if (code === 1) {
-          errorMessage = "API error: The API process failed. This might be due to invalid configuration or missing dependencies.";
-        }
-        mainWindow.webContents.send('api-error', errorMessage);
-      }
+      pythonProcess = null;
     });
-
-    // Set a longer timeout and provide a more specific error message
-    const apiStartTimeout = setTimeout(() => {
-      if (!apiStarted && mainWindow) {
-        // Check if we can determine a more specific error
-        // First clear any previous timeout
-        clearTimeout(apiStartTimeout);
-        
-        // Send a more helpful error message
-        mainWindow.webContents.send('api-error', 
-          'API initialization timed out. This might be due to authentication issues, ' + 
-          'network connectivity problems, or invalid configuration. ' + 
-          'Please check your credentials and try again.'
-        );
-      }
-    }, 15000); // Increased timeout to 15 seconds to give more time for startup
-
+    
+    return pythonProcess;
   } catch (error) {
-    console.error('Failed to start Python API:', error);
+    console.error('Error in startPythonApi:', error);
+    
     if (mainWindow) {
       mainWindow.webContents.send('api-error', `Failed to start API: ${error.message}`);
     }
+    
+    return null;
   }
+}
+
+/**
+ * Find the API script (api.py) in the api directory
+ * @returns {string} - Path to the api.py file
+ */
+function findApiPath() {
+  console.log('Current working directory:', process.cwd());
+  console.log('App path:', app.getAppPath());
+  console.log('__dirname:', __dirname);
+  
+  // Try these paths in order until we find the API file
+  const possibleApiPaths = [
+    path.join(__dirname, '..', 'api', 'api.py'),          // Development - relative to electron dir
+    path.join(process.cwd(), 'api', 'api.py'),            // Development - from current working dir
+    path.join(app.getAppPath(), '..', 'api', 'api.py'),   // Production - relative to app resources
+    path.join(app.getAppPath(), 'api', 'api.py'),         // Alternative production path
+    path.join(process.cwd(), '..', 'api', 'api.py'),      // One level up from cwd
+    path.resolve('api', 'api.py')                         // Resolve from current module
+  ];
+  
+  console.log('Possible API paths:');
+  possibleApiPaths.forEach((p, i) => {
+    try {
+      const exists = fs.existsSync(p);
+      console.log(`  ${i}: ${p} (exists: ${exists})`);
+    } catch (err) {
+      console.log(`  ${i}: ${p} (error checking: ${err.message})`);
+    }
+  });
+  
+  // Find the first path that exists
+  for (const testPath of possibleApiPaths) {
+    try {
+      if (fs.existsSync(testPath)) {
+        console.log('Found API path:', testPath);
+        return testPath;
+      }
+    } catch (err) {
+      // Continue to next path
+    }
+  }
+  
+  console.error('Could not locate API api.py file');
+  if (mainWindow) {
+    mainWindow.webContents.send('api-error', 'Could not locate the API module. Please check your installation.');
+  }
+  throw new Error('Could not locate API api.py file');
 }
 
 /**
@@ -490,14 +513,15 @@ async function startPythonApi(portToUse) {
  * @returns {Promise<boolean>} - True if credentials are valid, false otherwise
  */
 async function verifyCredentials(credentials) {
-  console.log('Verifying credentials before starting the API...');
-  
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     try {
-      // Instead of creating a temporary script, directly use the existing Python API
-      // with a special flag to just verify credentials and exit
+      console.log('Verifying credentials before starting the API...');
+    
+      // Find API path
+      const apiPath = findApiPath();
+      const apiDir = path.dirname(apiPath);
       
-      // Set environment variables for the verification process
+      // Set up environment variables for the auth verification
       const env = {
         ...process.env,
         GRAPH_CLIENT_ID: credentials.clientId,
@@ -505,55 +529,13 @@ async function verifyCredentials(credentials) {
         GRAPH_TENANT_ID: credentials.tenantId
       };
       
-      // Find the API script (api.py) in the api directory
-      let apiPath;
-      console.log('Current working directory:', process.cwd());
-      console.log('App path:', app.getAppPath());
-      console.log('__dirname:', __dirname);
-      
-      // Try these paths in order until we find the API file
-      const possibleApiPaths = [
-        path.join(__dirname, '..', 'api', 'api.py'),          // Development - relative to electron dir
-        path.join(process.cwd(), 'api', 'api.py'),            // Development - from current working dir
-        path.join(app.getAppPath(), '..', 'api', 'api.py'),   // Production - relative to app resources
-        path.join(app.getAppPath(), 'api', 'api.py'),         // Alternative production path
-        path.join(process.cwd(), '..', 'api', 'api.py'),      // One level up from cwd
-        path.resolve('api', 'api.py')                         // Resolve from current module
-      ];
-      
-      console.log('Possible API paths:');
-      possibleApiPaths.forEach((p, i) => {
-        try {
-          const exists = fs.existsSync(p);
-          console.log(`  ${i}: ${p} (exists: ${exists})`);
-        } catch (err) {
-          console.log(`  ${i}: ${p} (error checking: ${err.message})`);
-        }
+      console.log('Starting API with environment:', {
+        GRAPH_CLIENT_ID: credentials.clientId ? '[SET]' : '[NOT SET]',
+        GRAPH_CLIENT_SECRET: credentials.clientSecret ? '[SET]' : '[NOT SET]',
+        GRAPH_TENANT_ID: credentials.tenantId ? '[SET]' : '[NOT SET]'
       });
       
-      // Find the first path that exists
-      for (const testPath of possibleApiPaths) {
-        try {
-          if (fs.existsSync(testPath)) {
-            apiPath = testPath;
-            console.log('Found API path:', apiPath);
-            break;
-          }
-        } catch (err) {
-          // Continue to next path
-        }
-      }
-      
-      if (!apiPath) {
-        console.error('Could not locate API api.py file');
-        if (mainWindow) {
-          mainWindow.webContents.send('api-error', 'Could not locate the API module. Please check your installation.');
-        }
-        resolve(false);
-        return;
-      }
-      
-      const apiDir = path.dirname(apiPath);
+      console.log(`Starting Python API with uvicorn from directory: ${apiDir}`);
       
       // Run the API with a verify-only mode
       const verifyProcess = spawn('python', [apiPath, '--verify-only'], { 
@@ -563,6 +545,8 @@ async function verifyCredentials(credentials) {
       
       let authOutput = '';
       let authError = '';
+      let authSuccess = false;
+      let authFailed = false;
       
       verifyProcess.stdout.on('data', (data) => {
         const output = data.toString();
@@ -572,6 +556,9 @@ async function verifyCredentials(credentials) {
         // Check for successful authentication message
         if (output.includes('Authentication successful') || output.includes('Token acquired successfully')) {
           console.log('Credential verification successful');
+          authSuccess = true;
+          // Complete the verification since it was successful
+          clearTimeout(verifyTimeout);
           // Kill the process since we just needed verification
           verifyProcess.kill();
           resolve(true);
@@ -583,11 +570,25 @@ async function verifyCredentials(credentials) {
         authError += output;
         console.error(`Verify auth stderr: ${output}`);
         
-        // Check for authentication failure messages
+        // Check if this is actually a successful log message
+        if (output.includes('INFO:') && output.includes('access token')) {
+          console.log('Found token acquisition success message in logs');
+          authSuccess = true;
+          // Immediately resolve with success since this is a positive indicator
+          clearTimeout(verifyTimeout);
+          verifyProcess.kill();
+          resolve(true);
+          return;
+        }
+        
+        // Check for authentication failure messages in stderr
         if (output.includes('Authentication failed') || 
             output.includes('Invalid client') || 
             output.includes('AADSTS')) {
           console.error('Authentication failed in verification');
+          authFailed = true;
+          authSuccess = false;
+          clearTimeout(verifyTimeout);
           // Kill the process since we detected an error
           verifyProcess.kill();
           
@@ -600,19 +601,70 @@ async function verifyCredentials(credentials) {
       });
       
       verifyProcess.on('close', (code) => {
+        console.log(`Verification process closed with code: ${code}`);
+        
+        // If we already determined success/failure, don't do anything more
+        if (authSuccess) {
+          console.log('Verification already succeeded, no action needed on close');
+          resolve(true);
+          return;
+        }
+        
+        if (authFailed) {
+          console.log('Verification already failed, no action needed on close');
+          resolve(false);
+          return;
+        }
+        
         if (code === 0) {
           console.log('Credential verification process completed successfully');
           resolve(true);
+        } else if (code === null) {
+          // Process was killed - check if it was due to success
+          if (authSuccess || authOutput.includes('Authentication successful') || 
+              authOutput.includes('Token acquired successfully')) {
+            console.log('Process was killed after successful verification');
+            resolve(true);
+          } else {
+            console.error('Verification process was killed without clear success indicator');
+            
+            // Check if we can determine success from the combined output
+            if (authOutput.includes('Authentication successful') || 
+                authError.includes('access token') ||
+                (authOutput.includes('Token') && authOutput.includes('success'))) {
+              console.log('Found success indicators in combined output');
+              resolve(true);
+            } else {
+              console.error('No success indicators found in output');
+              
+              // Send specific error message to renderer
+              if (mainWindow) {
+                mainWindow.webContents.send('api-error', 
+                  'Credential verification interrupted. Please try again.');
+              }
+              
+              resolve(false);
+            }
+          }
         } else {
           console.error(`Credential verification failed with code ${code}`);
           console.error(`Error: ${authError}`);
+          
+          // Final check for success indicators in the output
+          if (authOutput.includes('Authentication successful') || 
+              authError.includes('access token') ||
+              (authOutput.includes('Token') && authOutput.includes('success'))) {
+            console.log('Found success indicators despite error code, treating as successful');
+            resolve(true);
+            return;
+          }
           
           // Send specific error message to renderer
           if (mainWindow) {
             if (authOutput.includes('Authentication failed') || authError.includes('Authentication failed')) {
               mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID.');
             } else {
-              mainWindow.webContents.send('api-error', `Credential verification failed: ${authError || authOutput || 'Unknown error'}`);
+              mainWindow.webContents.send('api-error', 'Credential verification failed. Please check your credentials and try again.');
             }
           }
           
@@ -621,10 +673,20 @@ async function verifyCredentials(credentials) {
       });
       
       // Set a timeout for the verification process
-      setTimeout(() => {
+      const verifyTimeout = setTimeout(() => {
         if (verifyProcess) {
-          verifyProcess.kill();
           console.error('Credential verification timed out');
+          
+          // Check if we saw success messages even though it timed out
+          if (authSuccess || authOutput.includes('Authentication successful') || 
+              authOutput.includes('Token acquired successfully') || 
+              authError.includes('access token')) {
+            console.log('Timeout occurred but success was detected in output');
+            resolve(true);
+            return;
+          }
+          
+          verifyProcess.kill();
           
           if (mainWindow) {
             mainWindow.webContents.send('api-error', 'Credential verification timed out. Please check your network connection and try again.');
@@ -632,14 +694,14 @@ async function verifyCredentials(credentials) {
           
           resolve(false);
         }
-      }, 15000); // 15 second timeout to allow for network latency
+      }, 15000); // 15 second timeout
       
     } catch (error) {
       console.error('Error during credential verification:', error);
       reject(error);
     }
   });
-}
+};
 
 // Handle login from renderer
 ipcMain.handle('login', async (event, credentials) => {
@@ -666,9 +728,20 @@ ipcMain.handle('login', async (event, credentials) => {
     }
 
     // Verify credentials before starting the API
-    const credentialsValid = await verifyCredentials(credentials);
-    if (!credentialsValid) {
-      return { success: false, message: 'Invalid credentials' };
+    try {
+      const credentialsValid = await verifyCredentials(credentials);
+      if (!credentialsValid) {
+        console.log('Credential verification failed, aborting login');
+        return { success: false, message: 'Invalid credentials' };
+      }
+      
+      console.log('Credentials verified successfully');
+    } catch (verifyError) {
+      console.error('Error during credential verification:', verifyError);
+      return { 
+        success: false, 
+        message: 'An error occurred during credential verification. Please try again.' 
+      };
     }
 
     // Store credentials securely using the correct key
@@ -677,13 +750,36 @@ ipcMain.handle('login', async (event, credentials) => {
 
     console.log('Credentials stored, finding port and starting Python API');
     // Find port *before* starting API
-    const initialApiPort = await findAvailablePort(8000);
-    await startPythonApi(initialApiPort); // Pass the found port
+    let portToUse;
     
-    return { success: true };
+    try {
+      portToUse = await findAvailablePort(8000);
+      console.log('Found available port:', portToUse);
+    } catch (error) {
+      console.error('Error finding available port:', error);
+      return { success: false, message: 'Failed to find available port for API' };
+    }
+
+    try {
+      // Start the API as a background process
+      startPythonApi(portToUse);
+      store.set('apiPort', portToUse);
+      
+      // Return success to the renderer
+      return { success: true };
+    } catch (apiError) {
+      console.error('Login error:', apiError);
+      store.set('isLoggedIn', false);
+      // If API startup fails, send an appropriate error message
+      return { 
+        success: false, 
+        message: apiError.message || 'Failed to start API. Please try again.'
+      };
+    }
   } catch (error) {
     console.error('Login error:', error);
-    return { success: false, message: error.message };
+    store.set('isLoggedIn', false);
+    return { success: false, message: error.message || 'An unexpected error occurred' };
   }
 });
 
