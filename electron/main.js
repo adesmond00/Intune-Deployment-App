@@ -492,51 +492,52 @@ async function startPythonApi(portToUse) {
 async function verifyCredentials(credentials) {
   console.log('Verifying credentials before starting the API...');
   
-  // Temporary process to verify credentials without starting the full API
-  // This runs a minimal version of the API just to check auth
+  // Create a temporary verification process using the existing auth.py module
   return new Promise((resolve, reject) => {
     try {
-      // NOTE: In a production implementation, the Python API would expose a
-      // dedicated "/verify-auth" endpoint that only checks credentials
-      // without starting the full server
+      // Set environment variables for the verification process
+      const env = {
+        ...process.env,
+        GRAPH_CLIENT_ID: credentials.clientId,
+        GRAPH_CLIENT_SECRET: credentials.clientSecret,
+        GRAPH_TENANT_ID: credentials.tenantId
+      };
       
-      // Create a temporary verification process with the credentials
-      const verifyProcess = spawn('python', [
-        '-c',
-        `
-import os
+      // Create a temporary verification script that uses the existing auth.py
+      const verifyPath = path.join(app.getAppPath(), 'api', 'verify_auth.py');
+      
+      // Create the verification script if it doesn't exist
+      const verifyContent = `
 import sys
-import msal
+import traceback
+from functions.auth import get_access_token
 
-# Set environment variables from credentials
-os.environ['GRAPH_CLIENT_ID'] = '${credentials.clientId}'
-os.environ['GRAPH_CLIENT_SECRET'] = '${credentials.clientSecret}'
-os.environ['GRAPH_TENANT_ID'] = '${credentials.tenantId}'
-
-# Configure MSAL authentication parameters
-authority = f"https://login.microsoftonline.com/{os.environ['GRAPH_TENANT_ID']}"
-app = msal.ConfidentialClientApplication(
-    client_id=os.environ['GRAPH_CLIENT_ID'],
-    client_credential=os.environ['GRAPH_CLIENT_SECRET'],
-    authority=authority
-)
-
-# Try to get a token to verify credentials
 try:
-    # Simple credential verification - request a token with basic scope
-    result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
-    
-    if "error" in result:
-        print(f"Authentication failed: {result.get('error_description', 'Unknown error')}")
-        sys.exit(1)
-    else:
+    # Try to get an access token using the existing auth module
+    token = get_access_token()
+    if token:
         print("Authentication successful")
         sys.exit(0)
+    else:
+        print("Authentication failed: Invalid credentials")
+        sys.exit(1)
 except Exception as e:
     print(f"Authentication failed: {str(e)}")
+    traceback.print_exc()
     sys.exit(1)
-        `
-      ], { shell: true });
+`;
+      
+      fs.writeFileSync(verifyPath, verifyContent);
+      
+      // Change the working directory for verification
+      const apiDir = path.join(app.getAppPath(), 'api');
+      
+      // Run the verification script
+      const verifyProcess = spawn('python', ['verify_auth.py'], { 
+        cwd: apiDir,
+        env: env,
+        shell: true
+      });
       
       let authOutput = '';
       let authError = '';
@@ -554,6 +555,13 @@ except Exception as e:
       });
       
       verifyProcess.on('close', (code) => {
+        // Clean up the temporary file
+        try {
+          fs.unlinkSync(verifyPath);
+        } catch (err) {
+          console.warn(`Could not delete temporary verification script: ${err.message}`);
+        }
+
         if (code === 0) {
           console.log('Credential verification successful');
           resolve(true);
@@ -586,7 +594,7 @@ except Exception as e:
           
           resolve(false);
         }
-      }, 10000); // 10 second timeout
+      }, 15000); // 15 second timeout to allow for network latency
       
     } catch (error) {
       console.error('Error during credential verification:', error);
