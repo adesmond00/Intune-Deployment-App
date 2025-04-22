@@ -276,19 +276,25 @@ async function startPythonApi() {
 
   // Determine the API script path
   let apiScript;
+  let apiDirectory;
+  
   if (app.isPackaged) {
     apiScript = path.join(process.resourcesPath, 'app', 'api', 'api.py');
+    apiDirectory = path.join(process.resourcesPath, 'app', 'api');
   } else {
     apiScript = path.join(__dirname, '../api/api.py');
+    apiDirectory = path.join(__dirname, '../api');
   }
 
   console.log(`Starting Python API with: ${pythonPath} ${apiScript}`);
 
   // Start the Python API
   try {
+    // We need to run the python script from its directory to make imports work
     pythonProcess = spawn(pythonPath, [apiScript], { 
       env,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: apiDirectory // Set the current working directory to the API directory
     });
 
     // Listen for API output

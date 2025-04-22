@@ -1,27 +1,40 @@
 from fastapi import FastAPI, HTTPException
 from typing import Optional, List, Dict
-# Use relative import since api.py is inside the 'api' directory
-from .functions.winget import search_winget_packages
+# Change relative imports to absolute imports
+from functions.winget import search_winget_packages
 from pydantic import BaseModel
-from .functions.intune_win32_uploader import upload_intunewin
+from functions.intune_win32_uploader import upload_intunewin
 # Add this import for CORS
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 app = FastAPI(title="Intune Deployment API")
 
-# Add CORS middleware configuration
-origins = [
-    "http://localhost:3000",  # Frontend origin (Next.js default)
-    "http://127.0.0.1:3000", # Allow IP address as well
-    # Add any other origins if necessary, e.g., your deployed frontend URL
-]
+# Get environment variables or set defaults
+debug_mode = os.environ.get("DEBUG", "true").lower() == "true"
+
+# Make CORS configuration more dynamic
+if debug_mode:
+    # In development, we'll allow all localhost origins
+    # This is more permissive but appropriate for local development
+    origins = [
+        "http://localhost:*",    # Match any port on localhost
+        "http://127.0.0.1:*",    # Match any port on 127.0.0.1
+    ]
+else:
+    # In production, we'll be more restrictive
+    # Since everything will be running in one Electron app, we'll allow localhost:3000
+    origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # List of origins allowed to make requests
-    allow_credentials=True, # Allow cookies to be included in requests
-    allow_methods=["*"],  # Allow all standard methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_origins=["*"] if debug_mode else origins,  # In development mode, allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/")
