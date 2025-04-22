@@ -429,6 +429,18 @@ async function startPythonApi(portToUse) {
           mainWindow.webContents.send('api-ready', apiPort);
         }
       }
+      
+      // Check for authentication errors in stdout
+      if (output.includes('Authentication failed') || 
+          output.includes('Invalid credentials') ||
+          output.includes('token request failed') ||
+          output.includes('AADSTS') || // Azure AD error codes
+          output.includes('auth error')) {
+        console.error('Authentication error detected in API output');
+        if (mainWindow) {
+          mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID. Please check your credentials and try again.');
+        }
+      }
     });
 
     pythonProcess.stderr.on('data', (data) => {
@@ -455,6 +467,18 @@ async function startPythonApi(portToUse) {
         return;
       }
       
+      // Check for authentication errors in stderr
+      if (output.includes('Authentication failed') || 
+          output.includes('Invalid credentials') ||
+          output.includes('token request failed') ||
+          output.includes('AADSTS') || // Azure AD error codes
+          output.includes('auth error')) {
+        console.error('Authentication error detected in API output');
+        if (mainWindow) {
+          mainWindow.webContents.send('api-error', 'Authentication failed: Invalid client ID, client secret, or tenant ID. Please check your credentials and try again.');
+        }
+      }
+      
       if (mainWindow) {
         mainWindow.webContents.send('api-log', `Error: ${output}`);
       }
@@ -466,16 +490,31 @@ async function startPythonApi(portToUse) {
       
       // Don't show error if we're retrying with a different port
       if (code !== 0 && mainWindow) {
-        mainWindow.webContents.send('api-error', `API process exited with code ${code}`);
+        // More descriptive error based on exit code
+        let errorMessage = `API process exited with code ${code}`;
+        if (code === 1) {
+          errorMessage = "API error: The API process failed. This might be due to invalid configuration or missing dependencies.";
+        }
+        mainWindow.webContents.send('api-error', errorMessage);
       }
     });
 
-    // Set a timeout to check if API started
-    setTimeout(() => {
+    // Set a longer timeout and provide a more specific error message
+    const apiStartTimeout = setTimeout(() => {
       if (!apiStarted && mainWindow) {
-        mainWindow.webContents.send('api-error', 'API failed to start within expected time');
+        // Check if we can determine a more specific error
+        // First clear any previous timeout
+        clearTimeout(apiStartTimeout);
+        
+        // Send a more helpful error message
+        mainWindow.webContents.send('api-error', 
+          'API initialization timed out. This might be due to authentication issues, ' + 
+          'network connectivity problems, or invalid configuration. ' + 
+          'Please check your credentials and try again.'
+        );
       }
-    }, 10000);
+    }, 15000); // Increased timeout to 15 seconds to give more time for startup
+
   } catch (error) {
     console.error('Failed to start Python API:', error);
     if (mainWindow) {
