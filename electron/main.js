@@ -926,51 +926,78 @@ function showErrorPage(errorMessage) {
 }
 
 // Function to check for existing Next.js processes on Windows
-const killExistingNextProcesses = () => {
-  if (process.platform === 'win32') {
-    try {
-      console.log('Checking for existing Next.js processes...');
-      const { execSync } = require('child_process');
-      const result = execSync('tasklist /FI "IMAGENAME eq node.exe" /FO CSV /NH').toString();
-      
-      // Extract PIDs from tasklist output that look like Next.js processes
-      const pidRegex = /"node.exe",(\d+)/g;
-      let match;
-      const possibleNextPids = [];
-      
-      while ((match = pidRegex.exec(result)) !== null) {
-        possibleNextPids.push(match[1]);
+const killExistingNextProcesses = (targetPort) => {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      console.log('Not on Windows, skipping process kill check.');
+      resolve();
+      return;
+    }
+
+    console.log(`Checking for existing processes on port ${targetPort} on Windows...`);
+
+    // Use netstat to find the PID of the process using the target port
+    const netstatCmd = `netstat -ano | findstr "LISTENING" | findstr ":${targetPort}"`;
+    exec(netstatCmd, (error, stdout, stderr) => {
+      if (error && !stdout.trim()) {
+        // Error occurred, but likely because findstr found nothing, which is good.
+        console.log(`No existing process found listening on port ${targetPort}.`);
+        resolve();
+        return;
       }
-      
-      if (possibleNextPids.length > 0) {
-        console.log(`Found ${possibleNextPids.length} possible Next.js processes. Checking command lines...`);
-        
-        // For each PID, check if it's actually a Next.js server
-        for (const pid of possibleNextPids) {
-          try {
-            // Get command line for the process
-            const cmdlineOutput = execSync(`wmic process where ProcessId=${pid} get CommandLine /format:list`).toString();
-            
-            // Check if it's a Next.js process
-            if (cmdlineOutput.includes('next dev') || cmdlineOutput.includes('node_modules\\next')) {
-              console.log(`Killing Next.js process with PID ${pid}`);
-              execSync(`taskkill /F /PID ${pid}`);
+      if (stderr) {
+        console.error(`Error checking port ${targetPort} with netstat: ${stderr}`);
+        // Continue even if netstat check fails, might still work
+      }
+
+      if (stdout.trim()) {
+        const lines = stdout.trim().split('\n');
+        const pidsToKill = lines
+          .map((line) => {
+            const pidMatch = line.match(/\s+(\d+)$/m); // Match PID at the end of the line
+            return pidMatch ? pidMatch[1] : null;
+          })
+          .filter((pid) => pid !== null);
+
+        if (pidsToKill.length > 0) {
+          console.log(`Found existing processes on port ${targetPort} with PIDs: ${pidsToKill.join(', ')}. Attempting to kill...`);
+          // Kill the found processes
+          const killCmd = `taskkill /F /PID ${pidsToKill.join(' /PID ')}`;
+          exec(killCmd, (killError, killStdout, killStderr) => {
+            if (killError) {
+              console.error(
+                `Failed to kill processes ${pidsToKill.join(', ')}: ${killError.message}`,
+              );
+              console.error(`Stderr from taskkill: ${killStderr}`);
+              // Reject might be too strong? Maybe just warn and continue?
+              // For now, let's resolve but log the error.
+              resolve(); // Resolve even if kill fails, allowing startup attempt
+              return;
             }
-          } catch (cmdError) {
-            console.log(`Error getting command line for PID ${pid}:`, cmdError.message);
-          }
+            console.log(
+              `Successfully killed processes ${pidsToKill.join(', ')} using port ${targetPort}.`,
+            );
+            console.log(`Taskkill stdout: ${killStdout}`);
+            resolve();
+          });
+        } else {
+          console.log(
+            `Netstat found listening ports but could not extract PIDs for port ${targetPort}. Output:\n${stdout}`,
+          );
+          resolve();
         }
       } else {
-        console.log('No existing Next.js processes found.');
+        // Should have been caught by the first error check, but just in case
+        console.log(`No existing process found listening on port ${targetPort}.`);
+        resolve();
       }
-    } catch (error) {
-      console.error('Error checking for existing Next.js processes:', error);
-    }
-  }
+    });
+  });
 };
 
 // Kill any existing Next.js processes on startup
-killExistingNextProcesses();
+const NEXT_DEV_PORT = 3000;
+killExistingNextProcesses(NEXT_DEV_PORT);
 
 // Standard Electron app lifecycle events
 app.on('activate', function () {
