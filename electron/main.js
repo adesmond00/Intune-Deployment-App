@@ -169,46 +169,11 @@ function createWindow() {
           
           // Check login status once page is loaded
           mainWindow.webContents.on('did-finish-load', () => {
-            // Call handlePageLoaded first to determine login state
-            const isLoggedIn = handlePageLoaded(); // Modify handlePageLoaded to return login state
+            // Call handlePageLoaded to enforce showing the login screen
+            handlePageLoaded();
             
-            // Only set up fallback logic if the user is NOT logged in
-            if (!isLoggedIn) {
-              // Set a timeout to check if the login screen is properly shown
-              let loginScreenDetected = false;
-              const loginCheckTimeout = setTimeout(() => {
-                if (!loginScreenDetected) {
-                  console.log('Login screen not detected within expected time, loading fallback');
-                  // If login hasn't been detected, fall back to the static HTML login
-                  if (mainWindow && !mainWindow.isDestroyed()) {
-                      mainWindow.loadFile(path.join(__dirname, 'fallback.html'));
-                  }
-                }
-              }, 5000);
-              
-              // Listen for console logs from the renderer to detect login screen
-              const consoleListener = (event, level, message) => {
-                  if (message.includes('Rendering login screen')) {
-                      loginScreenDetected = true;
-                      clearTimeout(loginCheckTimeout); // Cancel fallback timer
-                      // Optional: remove listener once detected?
-                      // mainWindow.webContents.removeListener('console-message', consoleListener);
-                  }
-              };
-              mainWindow.webContents.on('console-message', consoleListener);
-              
-              // Ensure listener is removed if window closes
-              mainWindow.on('closed', () => {
-                 mainWindow.webContents.removeListener('console-message', consoleListener);
-              });
-            }
-            // If isLoggedIn is true, we assume the main app page is loading correctly
-            // and no fallback is needed.
-          });
-
-          // Listen for console logs from the renderer
-          mainWindow.webContents.on('console-message', (event, level, message) => {
-            console.log(`Renderer Console: ${message}`);
+            // No need for fallback mechanism - we'll ensure the main login screen works properly
+            console.log('Main page loaded, login screen will be shown via IPC');
           });
         } else {
           retryOrFail();
@@ -224,8 +189,6 @@ function createWindow() {
           setTimeout(pollServer, pollInterval);
         } else {
           console.error('Failed to connect to Next.js server after maximum attempts');
-          // Load the fallback HTML login page
-          mainWindow.loadFile(path.join(__dirname, 'fallback.html'));
         }
       }
     }
@@ -238,14 +201,6 @@ function createWindow() {
       handlePageLoaded();
     });
   }
-  
-  // If we're showing a fallback login, we don't need the handlePageLoaded function
-  // to be called, as the fallback login will call login directly
-  mainWindow.webContents.on('did-navigate', (event, url) => {
-    if (url.includes('fallback.html')) {
-      console.log('Showing fallback login screen');
-    }
-  });
 }
 
 function handlePageLoaded() {
