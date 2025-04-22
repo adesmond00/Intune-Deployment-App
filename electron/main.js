@@ -297,11 +297,16 @@ async function findAvailablePort(startPort, endPort = startPort + 100) {
   return findAvailablePort(endPort + 1, endPort + 100);
 }
 
-async function startPythonApi() {
+// Refactored: Accepts port as an argument
+async function startPythonApi(portToUse) {
   if (apiStarted) {
     console.log('API already started');
     return;
   }
+
+  // Update the global apiPort variable
+  apiPort = portToUse;
+  console.log(`Attempting to start API on port: ${apiPort}`);
 
   const credentials = store.get('credentials');
   if (!credentials) {
@@ -347,15 +352,6 @@ async function startPythonApi() {
     apiDirectory = path.join(__dirname, '../api');
   }
 
-  // Find an available port for the API
-  try {
-    apiPort = await findAvailablePort(8000);
-    console.log(`Using API port: ${apiPort}`);
-  } catch (error) {
-    console.error('Error finding available port:', error);
-    // Continue with default port
-  }
-  
   // Run uvicorn directly instead of the Python script
   console.log(`Starting Python API with uvicorn from directory: ${apiDirectory}`);
 
@@ -366,7 +362,7 @@ async function startPythonApi() {
       '-m', 'uvicorn',
       'api:app',  // Use the script name directly
       '--host', '0.0.0.0',
-      '--port', apiPort.toString()
+      '--port', apiPort.toString() // Use the determined port
     ];
     
     console.log(`Starting Python API with: ${pythonPath} ${args.join(' ')}`);
@@ -407,9 +403,10 @@ async function startPythonApi() {
         
         // Small delay before retrying
         setTimeout(async () => {
-          apiPort = await findAvailablePort(apiPort + 1);
-          apiStarted = false;
-          startPythonApi();
+          // Find the *next* available port starting from the failed one + 1
+          const nextPort = await findAvailablePort(apiPort + 1);
+          apiStarted = false; // Reset status before retry
+          startPythonApi(nextPort); // Retry with the newly found port
         }, 1000);
         
         return;
@@ -462,9 +459,10 @@ ipcMain.handle('login', async (event, credentials) => {
     store.set('credentials', credentials);
     store.set('isLoggedIn', true);
 
-    console.log('Credentials stored, starting Python API');
-    // Start the Python API
-    await startPythonApi();
+    console.log('Credentials stored, finding port and starting Python API');
+    // Find port *before* starting API
+    const initialApiPort = await findAvailablePort(8000);
+    await startPythonApi(initialApiPort); // Pass the found port
     
     return { success: true };
   } catch (error) {
@@ -530,3 +528,13 @@ app.on('before-quit', () => {
     nextProcess.kill();
   }
 });
+
+// Start Python API if logged in
+if (store.get('isLoggedIn')) {
+  console.log('App ready, starting API with stored credentials');
+  // Find port *before* starting API
+  const initialApiPort = await findAvailablePort(8000);
+  await startPythonApi(initialApiPort); // Pass the found port
+} else {
+  console.log('App ready, user not logged in');
+}

@@ -33,12 +33,6 @@ import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 /**
- * API Base URL for all endpoints
- * This can be easily modified to point to different environments
- */
-const API_BASE_URL = "http://127.0.0.1:8000"
-
-/**
  * Path on the API host to the generic .intunewin package that triggers the
  * Winget install/uninstall PowerShell script.
  */
@@ -119,7 +113,7 @@ export function WingetDeploymentPage() {
   const [deploymentError, setDeploymentError] = useState<string | null>(null)
 
   // State for dynamic API URL
-  const [apiUrlBase, setApiUrlBase] = useState<string>(API_BASE_URL)
+  const [apiUrlBase, setApiUrlBase] = useState<string>("")
 
   useEffect(() => {
     // Check if we're running in Electron
@@ -315,7 +309,7 @@ export function WingetDeploymentPage() {
 
       // Prepare request payload
       const payload: UploadRequest = {
-        path: INTUNEWIN_PATH,
+        path: `${apiUrlBase}/${INTUNEWIN_PATH}`, // Use dynamic API base URL
         display_name: app.name,
         package_id: app.id,
         publisher: app.customPublisher || app.publisher,
