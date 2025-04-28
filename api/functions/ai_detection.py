@@ -13,7 +13,7 @@ from typing import Dict, Optional, Union, List
 import requests
 
 # OpenAI API key - replace with your key
-OPENAI_API_KEY = ""
+OPENAI_API_KEY = "example"
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
