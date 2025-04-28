@@ -67,6 +67,7 @@ class UploadRequest(BaseModel):
     package_id: str
     publisher: Optional[str] = None
     description: Optional[str] = None
+    detection_script: Optional[str] = None
 
 
 # Endpoint to upload Win32 .intunewin package to Intune
@@ -87,6 +88,8 @@ async def upload_win32_app(body: UploadRequest):
         Publisher name; defaults to empty if omitted.
     description : str, optional
         Descriptive text shown in Intune. Defaults to display_name if omitted.
+    detection_script : str, optional
+        A PowerShell detection script (Base64‑encoded by the uploader). Defaults to "exit 0" when omitted.
     """
     try:
         app_id = upload_intunewin(
@@ -94,7 +97,8 @@ async def upload_win32_app(body: UploadRequest):
             display_name=body.display_name,
             package_id=body.package_id,
             description=body.description,
-            publisher=body.publisher or ""
+            publisher=body.publisher or "",
+            detection_script=body.detection_script,
         )
         return {"app_id": app_id}
     except Exception as exc:

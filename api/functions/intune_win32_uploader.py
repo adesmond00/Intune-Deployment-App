@@ -107,7 +107,14 @@ def _graph_request(method: str, url: str, **kwargs):
     return resp.json() if resp.content else None
 
 
-def _create_app_shell(display_name: str, description: Optional[str], publisher: str, installer_name: str, package_id: str) -> str:
+def _create_app_shell(
+    display_name: str,
+    description: Optional[str],
+    publisher: str,
+    installer_name: str,
+    package_id: str,
+    detection_script: str = "exit 0",
+) -> str:
     if not description:
         description = display_name
     # Build install/uninstall command lines based on PackageID and display name
@@ -137,7 +144,7 @@ def _create_app_shell(display_name: str, description: Optional[str], publisher: 
                 "ruleType": "detection",
                 "enforceSignatureCheck": False,
                 "runAs32Bit": False,
-                "scriptContent": base64.b64encode(b"exit 0").decode(),
+                "scriptContent": base64.b64encode(detection_script.encode("utf-8")).decode(),
                 "operationType": "notConfigured",
                 "operator": "notConfigured"
             }
@@ -313,6 +320,7 @@ def upload_intunewin(
     package_id: str,
     description: Optional[str] = None,
     publisher: str = "",
+    detection_script: Optional[str] = None,
 ) -> str:
     """
     End‑to‑end helper.
@@ -321,6 +329,8 @@ def upload_intunewin(
     ----------
     description : str, optional
         Descriptive text shown in Intune. Defaults to display_name if omitted.
+    detection_script : str, optional
+        A PowerShell detection script. Defaults to "exit 0" if omitted.
     package_id : str
         The Winget package identifier.
 
@@ -332,7 +342,14 @@ def upload_intunewin(
     intunewin = Path(path).expanduser().resolve()
     meta, encrypted = _parse_detection_xml(intunewin)
 
-    app_id = _create_app_shell(display_name, description, publisher or "Unknown", meta["file_name"], package_id)
+    app_id = _create_app_shell(
+        display_name,
+        description,
+        publisher or "Unknown",
+        meta["file_name"],
+        package_id,
+        detection_script or "exit 0",
+    )
     logger.info("Created app shell. ID: %s", app_id)
     version_id = _create_content_version(app_id)
     logger.info("Created content version: %s", version_id)

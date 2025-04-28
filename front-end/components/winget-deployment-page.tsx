@@ -181,7 +181,7 @@ export function WingetDeploymentPage() {
 
   /**
    * Fetches search results from the API
-   *
+  
    * @param query - The search term to query
    * @returns Promise resolving to an array of WingetApp objects
    */
