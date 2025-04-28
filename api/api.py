@@ -4,6 +4,8 @@ from typing import Optional, List, Dict
 from functions.winget import search_winget_packages
 from pydantic import BaseModel
 from functions.intune_win32_uploader import upload_intunewin
+# Add import for the ai_detection module
+from functions.ai_detection import generate_detection_script
 # Add this import for CORS
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -95,6 +97,38 @@ async def upload_win32_app(body: UploadRequest):
             publisher=body.publisher or ""
         )
         return {"app_id": app_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+# Response model for detection script endpoint
+class DetectionScriptResponse(BaseModel):
+    script: str
+    app_name: str
+
+# Endpoint to generate a detection script for an application
+@app.get("/detection-script", response_model=DetectionScriptResponse)
+async def get_detection_script(app_name: str):
+    """
+    Generate a PowerShell detection script for an application.
+    
+    Query Parameters
+    ---------------
+    app_name : str
+        The name of the application (e.g., "Google Chrome", "7-Zip").
+        
+    Returns
+    -------
+    A JSON object containing:
+    - script: The PowerShell detection script
+    - app_name: The application name that was provided
+    
+    The script will detect if the application is installed and output a message
+    to STDOUT when detected, with exit code 0 for success (detected) or non-zero
+    for failure (not detected).
+    """
+    try:
+        script = generate_detection_script(app_name)
+        return {"script": script, "app_name": app_name}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

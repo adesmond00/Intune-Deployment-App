@@ -1,278 +1,144 @@
-"""
-Helper for generating Intune detection scripts using OpenAI.
+"""AI-assisted generation of Intune Win32 app detection scripts.
 
-This module provides functionality to generate PowerShell detection scripts
-for Intune Win32 app deployments based on app names, using OpenAI's API.
+This module provides a helper that leverages the OpenAI Chat Completion
+API to synthesise a PowerShell detection script for a given application
+name.  The resulting script can be used as a *detection rule* when
+creating a Win32 LOB application in Microsoft Intune.
+
+The function intentionally restricts the LLM output to a structured JSON
+object that contains a single key -- `script` -- whose value is the
+PowerShell code.  This makes parsing reliable and guards against free-
+text preambles or epilogues that would break automated consumption.
 """
+
+from __future__ import annotations
 
 import json
 import logging
 import os
-from typing import Dict, Optional, Union, List
+from typing import Optional
 
-import requests
+try:
+    # openai>=1.2.0 – use the new client API naming
+    from openai import OpenAI  # type: ignore
+except ImportError as exc:  # pragma: no cover – optional dependency
+    raise ImportError(
+        "The \x1b[1mopenai\x1b[0m package is required for AI detection script "
+        "generation.  Install it via 'pip install openai'."
+    ) from exc
 
-# OpenAI API key - replace with your key
-# OPENAI_API_KEY = "example"
+__all__ = ["generate_detection_script"]
+_logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    # default to INFO level if the parent application hasn't configured logging
-    logging.basicConfig(level=logging.INFO)
-
-# Base URL for OpenAI API
-OPENAI_API_BASE = "https://api.openai.com/v1"
-
+# --------------------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------------------
 
 def generate_detection_script(
-    app_name: str, 
-    model: str = "gpt-3.5-turbo",  # Using a more widely available model
-    use_predicted_outputs: bool = False  # Temporarily disable predicted outputs for testing
+    app_name: str,
+    *,
+    model: str = "gpt-4o-mini",
+    temperature: float = 0.2,
+    openai_api_key: Optional[str] = None,
+    max_tokens: int | None = None,
 ) -> str:
-    """
-    Generate a PowerShell detection script for an Intune Win32 app deployment.
-    
-    The script will detect if the specified app is installed by checking common
-    installation indicators (registry entries or executable files). The detection
-    script follows Intune requirements where a successful detection:
-    1. Returns an exit code of 0
-    2. Writes a string value to STDOUT
-    
+    """Generate a PowerShell detection script for *app_name*.
+
     Parameters
     ----------
     app_name : str
-        The name of the application to detect
+        Human-friendly display name of the application (e.g. "7-Zip", "Google
+        Chrome").  The LLM uses this to infer the expected installation paths
+        or registry keys.
     model : str, optional
-        The OpenAI model to use, defaults to "gpt-3.5-turbo"
-    use_predicted_outputs : bool, optional
-        Whether to use OpenAI's predicted outputs feature for faster response times, 
-        defaults to False
-        
+        The OpenAI chat model to use.  Defaults to ``gpt-4o-mini`` which should
+        be available to most tenants; adjust to ``gpt-4o``, ``gpt-4-turbo`` or
+        ``gpt-3.5-turbo-0125`` if necessary.
+    temperature : float, optional
+        Sampling temperature.  A low temperature keeps the script concise and
+        deterministic.  Defaults to ``0.2``.
+    openai_api_key : str | None, optional
+        If *None*, the function reads the key from the ``OPENAI_API_KEY``
+        environment variable.
+    max_tokens : int | None, optional
+        Override the maximum number of tokens in the completion.  Leave as
+        *None* to rely on the model-specific default.
+
     Returns
     -------
     str
-        The generated PowerShell detection script
-    
-    Raises
-    ------
-    Exception
-        If the API call fails or the response cannot be processed
+        A PowerShell detection script.  The caller is responsible for storing
+        the script as UTF-8 text and base64-encoding it before sending it to
+        Microsoft Graph (see ``intune_win32_uploader`` module).
     """
-    logger.info(f"Generating detection script for app: {app_name}")
-    
-    # Template with common detection script patterns to enable predicted outputs
-    script_template = """<#
-.SYNOPSIS
-    Intune detection script for {app_name}
-.DESCRIPTION
-    This script checks if {app_name} is installed on the system
-    and outputs a string if found while returning exit code 0.
-#>
 
-# Initialize variables
-$appFound = $false
-$appName = "{app_name}"
-$registryPaths = @(
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*",
-    "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*"
-)
+    if not app_name:
+        raise ValueError("'app_name' must be a non-empty string")
 
-try {{
-    # DETECTION LOGIC WILL BE INSERTED HERE
-    
-    # If app is found, output a message and exit with code 0
-    if ($appFound) {{
-        Write-Output "Found $appName installation."
-        exit 0
-    }} else {{
-        Write-Output "$appName not found."
-        exit 1
-    }}
-}} catch {{
-    Write-Error "Error in detection script: $_"
-    exit 1
-}}
-"""
-    
-    # System message to instruct the model on its task
-    system_message = """
-You are an expert PowerShell script writer specializing in Microsoft Intune detection scripts.
-
-Your task is to create a detection script for the specified application that follows these requirements:
-
-1. The script MUST return an exit code of 0 ONLY when the app is found
-2. The script MUST write a string to STDOUT when the app is found
-3. The script should look for the most reliable indicators of installation, such as:
-   - Registry entries (HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall, HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall)
-   - Program Files directories
-   - AppData locations
-   - Standard installation paths
-4. The script should be robust with appropriate error handling
-5. Return ONLY the PowerShell script with no additional text, explanations, or markdown formatting
-
-Remember: For Intune detection to be successful, the script must both return an exit code of 0 AND write a string to STDOUT.
-"""
-    
-    # Create proper completion using OpenAI's API
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    
-    # Simplified payload for reliability
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": f"Create a PowerShell detection script for {app_name} that checks if it's installed. The script should return exit code 0 and write to STDOUT only when the app is found."}
-        ]
-    }
-    
-    try:
-        logger.debug(f"Sending request to OpenAI API for app: {app_name}")
-        response = requests.post(
-            f"{OPENAI_API_BASE}/chat/completions", 
-            headers=headers, 
-            json=payload
+    api_key = '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'  #openai_api_key #or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "OPENAI_API_KEY is not set.  Export the key or pass it explicitly via the 'openai_api_key' argument."  # noqa: E501
         )
-        response.raise_for_status()
-        response_data = response.json()
-        
-        # Extract the content
-        if "choices" in response_data and response_data["choices"]:
-            content = response_data["choices"][0]["message"]["content"]
-            
-            # Extract code block if present
-            if "```powershell" in content or "```ps1" in content:
-                # Extract code from markdown code blocks
-                import re
-                code_blocks = re.findall(r'```(?:powershell|ps1)(.*?)```', content, re.DOTALL)
-                if code_blocks:
-                    script = code_blocks[0].strip()
-                else:
-                    script = content  # Fallback
-            else:
-                script = content
-                
-            logger.info(f"Successfully generated detection script for {app_name}")
-            return script
-        else:
-            raise ValueError("Unexpected response format from OpenAI")
-            
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error making request to OpenAI API: {str(e)}")
-        raise Exception(f"Failed to connect to OpenAI API: {str(e)}") from e
-    except (KeyError, ValueError) as e:
-        logger.error(f"Error processing OpenAI response: {str(e)}")
-        raise Exception(f"Failed to process OpenAI response: {str(e)}") from e
 
+    client = OpenAI(api_key=api_key)
 
-def generate_detection_script_with_function_calling(
-    app_name: str, 
-    model: str = "gpt-3.5-turbo"  # Using a more widely available model
-) -> str:
-    """
-    Alternative implementation using OpenAI's function calling feature.
-    
-    This method uses the function calling API to ensure properly structured output.
-    
-    Parameters
-    ----------
-    app_name : str
-        The name of the application to detect
-    model : str, optional
-        The OpenAI model to use, defaults to "gpt-3.5-turbo"
-        
-    Returns
-    -------
-    str
-        The generated PowerShell detection script
-    """
-    logger.info(f"Generating detection script using function calling for app: {app_name}")
-    
-    # System message to instruct the model on its task
-    system_message = """
-You are an expert PowerShell script writer specializing in Microsoft Intune detection scripts.
+    system_prompt = _SYSTEM_PROMPT.strip()
+    user_prompt = _USER_PROMPT_TEMPLATE.format(app_name=app_name.strip())
 
-Your task is to create a detection script for the specified application that follows these requirements:
+    _logger.debug("Requesting detection script for '%s' using model '%s'", app_name, model)
 
-1. The script MUST return an exit code of 0 ONLY when the app is found
-2. The script MUST write a string to STDOUT when the app is found
-3. The script should look for the most reliable indicators of installation, such as:
-   - Registry entries (HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall, HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall)
-   - Program Files directories
-   - AppData locations
-   - Standard installation paths
-4. The script should be robust with appropriate error handling
-
-Remember: For Intune detection to be successful, the script must both return an exit code of 0 AND write a string to STDOUT.
-"""
-    
-    # Define function schema with strict mode enabled
-    function_definition = {
-        "name": "generate_detection_script",
-        "description": "Generate a PowerShell detection script for Intune",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "script": {
-                    "type": "string", 
-                    "description": "The complete PowerShell detection script"
-                }
-            },
-            "required": ["script"]
-        }
-    }
-    
-    # Create a completion using OpenAI's API with defined structure
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": f"Create a detection script for {app_name}"}
+    completion = client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
-        "functions": [function_definition],  # Using the older "functions" parameter for compatibility
-        "function_call": {"name": "generate_detection_script"}  # Using the older function_call parameter
-    }
-    
+    )
+
+    content: str = completion.choices[0].message.content  # pyright: ignore[reportGeneralTypeIssues]
+    _logger.debug("Raw response: %s", content)
+
     try:
-        logger.debug(f"Sending request to OpenAI API for app: {app_name}")
-        response = requests.post(
-            f"{OPENAI_API_BASE}/chat/completions", 
-            headers=headers, 
-            json=payload
-        )
-        response.raise_for_status()
-        response_data = response.json()
-        
-        # Extract the function call arguments which contain our script
-        function_call = response_data["choices"][0]["message"].get("function_call")
-        if function_call and function_call["name"] == "generate_detection_script":
-            arguments = json.loads(function_call["arguments"])
-            script = arguments.get("script", "")
-            
-            if not script:
-                raise ValueError("Received empty script from OpenAI")
-            
-            logger.info(f"Successfully generated detection script for {app_name}")
-            return script
-        else:
-            # Fallback to regular content if function call not present
-            content = response_data["choices"][0]["message"].get("content", "")
-            if content:
-                logger.info(f"Falling back to content output for {app_name}")
-                return content
-            else:
-                raise ValueError("Unexpected response format from OpenAI")
-            
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error making request to OpenAI API: {str(e)}")
-        raise Exception(f"Failed to connect to OpenAI API: {str(e)}") from e
-    except (KeyError, ValueError, json.JSONDecodeError) as e:
-        logger.error(f"Error processing OpenAI response: {str(e)}")
-        raise Exception(f"Failed to process OpenAI response: {str(e)}") from e
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("LLM returned invalid JSON.  Check prompts or model output.") from exc
+
+    script = data.get("script")
+    if not script or not isinstance(script, str):
+        raise RuntimeError("LLM response does not contain a 'script' string key.")
+
+    return script.strip()
+
+
+# --------------------------------------------------------------------------------------
+# Prompt templates
+# --------------------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """
+You are a senior Intune deployment engineer.
+Your task is to write \\x1b[1m*only*\\x1b[0m a PowerShell detection script for a Win32 LOB application.
+The detection script must fulfil \\x1b[1mall\\x1b[0m of these requirements:
+
+1. The script exits with code 0 when the application is detected; non-zero otherwise.
+2. When \\x1b[1mdetected\\x1b[0m, the script writes a human-readable string to STDOUT (e.g. the installed version).
+3. No additional output, comments, or explanations are allowed.
+
+Pick the most reliable detection mechanism based on the application name provided by the user, prioritising:
+  a. Checking for the main executable under common x64/x86 ProgramFiles paths, OR
+  b. Querying the uninstall registry keys under `HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall` (including Wow6432Node) for the DisplayName, InstallLocation, or DisplayVersion.
+
+Return your answer as a \\x1b[1mJSON object\\x1b[0m that conforms to this schema (no other keys):
+{
+  "script": string  // the complete PowerShell script, no markdown fences
+}
+
+Do NOT wrap the JSON in markdown.  Provide no additional keys or textual preamble.
+"""
+
+_USER_PROMPT_TEMPLATE = (
+    "Generate a detection script for the application named: \"{app_name}\"."
+)
