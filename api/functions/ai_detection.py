@@ -13,7 +13,7 @@ from typing import Dict, Optional, Union, List
 import requests
 
 # OpenAI API key - replace with your key
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = ""
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
