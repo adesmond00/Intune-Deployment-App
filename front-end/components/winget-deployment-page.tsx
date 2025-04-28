@@ -284,30 +284,51 @@ export function WingetDeploymentPage() {
     }
   };
 
+  /**
+   * Calls the backend `/detection-script` endpoint and stores the result
+   *
+   * The query param `app_name` is built from the current display name (`app.name`)
+   * so whatever the user sees/edits is what the API receives—even if the app
+   * has been unlocked/edited moments before pressing the button.
+   */
   const generateDetectionScript = async (appId: string) => {
     setSelectedApps(selectedApps.map(a =>
       a.id === appId ? { ...a, isGeneratingScript: true, isEditingScript: false } : a
     ));
 
-    // simulate LLM call
-    await new Promise(res => setTimeout(res, 1500));
-
     const target = selectedApps.find(a => a.id === appId);
     if (!target) return;
 
-    const dummy = `# Detection script for ${target.name} (${target.id})
-# Generated automatically for Intune deployment
+    // Use the live value from the “Display Name” field (currently stored in customDescription).
+    // Fallback to the original package name if the user hasn’t entered anything.
+    const displayName =
+      target.customDescription && target.customDescription.trim().length > 0
+        ? target.customDescription
+        : target.name;
 
-$appId = "${target.id}"
+    try {
+      const resp = await fetch(
+        `${apiUrlBase}/detection-script?app_name=${encodeURIComponent(displayName)}`
+      );
 
-try {
-    $wingetResult = winget list --id $appId --accept-source-agreements | Out-String
-    if ($wingetResult -match $appId) { exit 0 } else { exit 1 }
-} catch { exit 1 }`;
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`API error ${resp.status}: ${txt}`);
+      }
 
-    setSelectedApps(selectedApps.map(a =>
-      a.id === appId ? { ...a, detectionScript: dummy, isGeneratingScript: false } : a
-    ));
+      const data: { script: string; app_name: string } = await resp.json();
+
+      setSelectedApps(selectedApps.map(a =>
+        a.id === appId
+          ? { ...a, detectionScript: data.script, isGeneratingScript: false }
+          : a
+      ));
+    } catch (err) {
+      console.error("Detection‑script generation failed:", err);
+      setSelectedApps(selectedApps.map(a =>
+        a.id === appId ? { ...a, isGeneratingScript: false } : a
+      ));
+    }
   };
 
   /**
