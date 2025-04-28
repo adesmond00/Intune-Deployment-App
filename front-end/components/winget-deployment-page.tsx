@@ -19,7 +19,15 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
+  Wand2,
+  Loader2,
+  Copy,
+  CheckIcon
 } from "lucide-react"
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus, vs } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { useTheme } from "next-themes";
 import { useState, useEffect } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -72,6 +80,9 @@ interface ApiSearchResult {
 interface SelectedApp extends WingetApp {
   customDescription?: string // Custom description for the application
   customPublisher?: string // Custom publisher information
+  detectionScript?: string; // PowerShell detection script
+  isGeneratingScript?: boolean; // script generation in progress
+  isEditingScript?: boolean; // editing mode flag
   isLocked: boolean // Whether the configuration is locked/confirmed
   isConfigured: boolean // Whether the app has been configured
   isExpanded: boolean // Whether the configuration panel is expanded
@@ -89,6 +100,7 @@ interface UploadRequest {
   package_id: string // Winget package identifier
   publisher?: string // Publisher name (optional)
   description?: string // Description text (optional)
+  detection_script?: string; // detection script (optional)
 }
 
 /**
@@ -120,6 +132,19 @@ export function WingetDeploymentPage() {
     null,
   )
   const [deploymentError, setDeploymentError] = useState<string | null>(null)
+
+  // Theme
+  const { resolvedTheme } = useTheme();
+  const isDarkTheme = resolvedTheme === "dark";
+
+  // Script copy status
+  const [copiedScriptId, setCopiedScriptId] = useState<string | null>(null);
+  useEffect(() => {
+    if (copiedScriptId) {
+      const t = setTimeout(() => setCopiedScriptId(null), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [copiedScriptId]);
 
   // State for dynamic API URL
   const [apiUrlBase, setApiUrlBase] = useState<string>("")
@@ -235,6 +260,9 @@ export function WingetDeploymentPage() {
           ...app,
           customDescription: app.description,
           customPublisher: app.publisher,
+          detectionScript: "",
+          isGeneratingScript: false,
+          isEditingScript: false,
           isLocked: false,
           isConfigured: false,
           isExpanded: false,
@@ -242,6 +270,45 @@ export function WingetDeploymentPage() {
       ])
     }
   }
+  const toggleScriptEditing = (appId: string) => {
+    setSelectedApps(selectedApps.map(a =>
+      a.id === appId ? { ...a, isEditingScript: !a.isEditingScript } : a
+    ));
+  };
+
+  const copyScriptToClipboard = (appId: string) => {
+    const app = selectedApps.find(a => a.id === appId);
+    if (app?.detectionScript) {
+      navigator.clipboard.writeText(app.detectionScript);
+      setCopiedScriptId(appId);
+    }
+  };
+
+  const generateDetectionScript = async (appId: string) => {
+    setSelectedApps(selectedApps.map(a =>
+      a.id === appId ? { ...a, isGeneratingScript: true, isEditingScript: false } : a
+    ));
+
+    // simulate LLM call
+    await new Promise(res => setTimeout(res, 1500));
+
+    const target = selectedApps.find(a => a.id === appId);
+    if (!target) return;
+
+    const dummy = `# Detection script for ${target.name} (${target.id})
+# Generated automatically for Intune deployment
+
+$appId = "${target.id}"
+
+try {
+    $wingetResult = winget list --id $appId --accept-source-agreements | Out-String
+    if ($wingetResult -match $appId) { exit 0 } else { exit 1 }
+} catch { exit 1 }`;
+
+    setSelectedApps(selectedApps.map(a =>
+      a.id === appId ? { ...a, detectionScript: dummy, isGeneratingScript: false } : a
+    ));
+  };
 
   /**
    * Removes an application from the selected list
@@ -309,6 +376,7 @@ export function WingetDeploymentPage() {
             isLocked: !app.isLocked,
             isConfigured: isConfigured,
             isExpanded: false, // Close the panel when locking
+            isEditingScript: false,
           }
         }
         return app
@@ -334,6 +402,7 @@ export function WingetDeploymentPage() {
         package_id: app.id,
         publisher: app.customPublisher || app.publisher,
         description: app.customDescription || app.description,
+        detection_script: app.detectionScript,
       }
 
       // Make API request
@@ -848,6 +917,136 @@ export function WingetDeploymentPage() {
                             application
                           </p>
                         </div>
+                      </div>
+                      {/* Detection Script field */}
+                      <div className="mt-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor={`${app.id}-detection-script`}>Detection Script</Label>
+                          <div className="flex items-center gap-1">
+                            {app.detectionScript && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0"
+                                      onClick={() => copyScriptToClipboard(app.id)}
+                                    >
+                                      {copiedScriptId === app.id ? (
+                                        <CheckIcon className="h-4 w-4 text-green-500" />
+                                      ) : (
+                                        <Copy className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>{copiedScriptId === app.id ? "Copied!" : "Copy script"}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+
+                            {app.detectionScript && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0"
+                                      onClick={() => toggleScriptEditing(app.id)}
+                                    >
+                                      {app.isEditingScript ? (
+                                        <CheckIcon className="h-4 w-4" />
+                                      ) : (
+                                        <Terminal className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>{app.isEditingScript ? "Save changes" : "Edit script"}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 w-6 p-0"
+                                    onClick={() => generateDetectionScript(app.id)}
+                                    disabled={app.isGeneratingScript}
+                                  >
+                                    {app.isGeneratingScript ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Wand2 className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Generate detection script</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        </div>
+                        <div className="relative">
+                          {!app.isEditingScript && app.detectionScript ? (
+                            <div className="rounded-md border overflow-hidden">
+                              <div className="bg-muted px-3 py-1.5 text-xs font-medium flex items-center justify-between">
+                                <span>PowerShell</span>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-5 px-1.5 text-xs"
+                                  onClick={() => toggleScriptEditing(app.id)}
+                                >
+                                  Edit
+                                </Button>
+                              </div>
+                              <SyntaxHighlighter
+                                language="powershell"
+                                style={isDarkTheme ? vscDarkPlus : vs}
+                                customStyle={{
+                                  margin: 0,
+                                  padding: "1rem",
+                                  fontSize: "0.875rem",
+                                  borderRadius: 0,
+                                  minHeight: "150px",
+                                  maxHeight: "350px",
+                                  overflow: "auto",
+                                }}
+                              >
+                                {app.detectionScript || "# No detection script generated yet"}
+                              </SyntaxHighlighter>
+                            </div>
+                          ) : (
+                            <Textarea
+                              id={`${app.id}-detection-script`}
+                              placeholder="PowerShell detection script"
+                              className="min-h-[150px] font-mono text-sm"
+                              value={app.detectionScript || ""}
+                              onChange={(e) => updateAppConfig(app.id, "detectionScript", e.target.value)}
+                              disabled={app.isLocked || app.isGeneratingScript}
+                            />
+                          )}
+                          {app.isGeneratingScript && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                              <div className="flex flex-col items-center gap-2">
+                                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                                <span className="text-sm font-medium">Generating script...</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          PowerShell script to detect if the application is installed
+                        </p>
                       </div>
                     </div>
                   )}
