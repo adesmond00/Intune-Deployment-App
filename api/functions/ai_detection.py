@@ -75,7 +75,7 @@ def generate_detection_script(
     if not app_name:
         raise ValueError("'app_name' must be a non-empty string")
 
-    api_key = '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'  #openai_api_key #or os.getenv("OPENAI_API_KEY")
+    api_key = ''  #openai_api_key #or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise EnvironmentError(
             "OPENAI_API_KEY is not set.  Export the key or pass it explicitly via the 'openai_api_key' argument."  # noqa: E501
