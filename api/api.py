@@ -12,10 +12,10 @@ if __package__ in (None, ""):
 from fastapi import FastAPI, HTTPException
 from typing import Optional, List, Dict
 from .database_handler import add_intune_app, search_apps, deploy_app
-from functions.winget import search_winget_packages
+from .functions.winget import search_winget_packages
 from pydantic import BaseModel
-from functions.intune_win32_uploader import upload_intunewin
-from functions.ai_detection import generate_detection_script
+from .functions.intune_win32_uploader import upload_intunewin
+from .functions.ai_detection import generate_detection_script
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     import uvicorn
     import sys
     import argparse
-    from functions.auth import get_access_token
+    from .functions.auth import get_access_token
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Intune Deployment API')

@@ -26,7 +26,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
-from functions.intune_win32_uploader import upload_intunewin
+from .functions.intune_win32_uploader import upload_intunewin
 
 # --------------------------------------------------------------------------------------
 # Engine helper (singleton)
