@@ -18,6 +18,8 @@ from functions.intune_win32_uploader import upload_intunewin
 from functions.ai_detection import generate_detection_script
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Loads variables from a .env file into the environment
 
 app = FastAPI(title="Intune Deployment API")
 
