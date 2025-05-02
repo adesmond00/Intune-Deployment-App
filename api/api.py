@@ -1,3 +1,14 @@
+# ---------------------------------------------------------------------------
+# Bootstrap for script execution
+# When this file is run directly (e.g. `python api.py` from the *api* folder),
+# Python sets __package__ to None so any relative imports fail.
+# We detect that case and push the project root (parent of this folder)
+# onto sys.path so that `from .database_handler …` and similar imports work.
+# ---------------------------------------------------------------------------
+if __package__ in (None, ""):
+    import pathlib, sys
+    sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
+
 from fastapi import FastAPI, HTTPException
 from typing import Optional, List, Dict
 from .database_handler import add_intune_app, search_apps, deploy_app

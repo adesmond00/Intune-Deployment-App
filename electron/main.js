@@ -411,6 +411,7 @@ function startPythonApi(port) {
     // Find the API path
     const apiPath = findApiPath();
     const apiDir = path.dirname(apiPath);
+    const projectRoot = path.join(apiDir, '..');
     
     // Get credentials from store
     const credentials = store.get('graphCredentials');
@@ -436,14 +437,14 @@ function startPythonApi(port) {
       GRAPH_CLIENT_SECRET: credentials.clientSecret ? '[SET]' : '[NOT SET]',
       GRAPH_TENANT_ID: credentials.tenantId ? '[SET]' : '[NOT SET]'
     });
-    
-    console.log(`Starting Python API with uvicorn from directory: ${apiDir}`);
-    const command = `python -m uvicorn api:app --host 0.0.0.0 --port ${port}`;
+
+    console.log(`Starting Python API with uvicorn from project root: ${projectRoot}`);
+    const command = `python -m uvicorn api.api:app --host 0.0.0.0 --port ${port}`;
     console.log(`Starting Python API with: ${command}`);
-    
+
     // Start the Python API
-    pythonProcess = spawn('python', ['-m', 'uvicorn', 'api:app', '--host', '0.0.0.0', '--port', port.toString()], {
-      cwd: apiDir,
+    pythonProcess = spawn('python', ['-m', 'uvicorn', 'api.api:app', '--host', '0.0.0.0', '--port', port.toString()], {
+      cwd: projectRoot,
       env: env
     });
     
@@ -613,6 +614,7 @@ async function verifyCredentials(credentials) {
       // Find API path
       const apiPath = findApiPath();
       const apiDir = path.dirname(apiPath);
+      const projectRoot = path.join(apiDir, '..');
       
       // Set up environment variables for the auth verification
       const env = {
@@ -627,12 +629,12 @@ async function verifyCredentials(credentials) {
         GRAPH_CLIENT_SECRET: credentials.clientSecret ? '[SET]' : '[NOT SET]',
         GRAPH_TENANT_ID: credentials.tenantId ? '[SET]' : '[NOT SET]'
       });
-      
-      console.log(`Starting Python API with uvicorn from directory: ${apiDir}`);
-      
+
+      console.log(`Verifying credentials by running "python -m api.api --verify-only" from project root: ${projectRoot}`);
+
       // Run the API with a verify-only mode
-      const verifyProcess = spawn('python', [apiPath, '--verify-only'], { 
-        cwd: apiDir,
+      const verifyProcess = spawn('python', ['-m', 'api.api', '--verify-only'], {
+        cwd: projectRoot,
         env: env
       });
       
