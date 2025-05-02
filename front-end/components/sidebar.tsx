@@ -73,6 +73,9 @@ export function Sidebar() {
 
           {/* Direct link to Winget deployment */}
           <NavItem href="/deployments/winget" icon={Terminal} label="Winget Deployment" collapsed={collapsed} />
+
+          {/* Direct link to App Library deployment */}
+          <NavItem href="/deployments/app-library" icon={Package} label="App Library" collapsed={collapsed} />
         </nav>
       </div>
 

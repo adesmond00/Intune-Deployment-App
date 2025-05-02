@@ -14,9 +14,15 @@ def search_winget_packages(search_term: str) -> List[Dict[str, str]]:
                               with keys "Name", "Id", "Version", and "Source".
     """
     try:
+        # Ensure the search term is quoted if it contains whitespace so that winget
+        # treats it as a single argument (without the user having to type quotes).
+        quoted_term = search_term
+        if " " in search_term and not (search_term.startswith("\"") or search_term.startswith("'")):
+            quoted_term = f'"{search_term}"'
+
         # Execute winget search command
         result = subprocess.run(
-            ["powershell", "-Command", f"winget search {search_term} --accept-source-agreements"],
+            ["powershell", "-Command", f"winget search {quoted_term} --accept-source-agreements"],
             capture_output=True,
             text=True,
             encoding='utf-8',

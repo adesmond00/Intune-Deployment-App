@@ -1,12 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from typing import Optional, List, Dict
-# Change relative imports to absolute imports
+from .database_handler import add_intune_app, search_apps, deploy_app
 from functions.winget import search_winget_packages
 from pydantic import BaseModel
 from functions.intune_win32_uploader import upload_intunewin
-# Add import for the ai_detection module
 from functions.ai_detection import generate_detection_script
-# Add this import for CORS
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
@@ -133,6 +131,39 @@ async def get_detection_script(app_name: str):
     try:
         script = generate_detection_script(app_name)
         return {"script": script, "app_name": app_name}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/db/apps", status_code=201)
+async def db_add_app(body: UploadRequest):
+    """Add a packaged app record to the database (no Intune upload)."""
+    try:
+        new_id = add_intune_app(
+            app_name=body.display_name,
+            version="latest",  # For now default; UI can pass appropriate value
+            intunewin_path=body.path,
+            install_command=body.path,  # Placeholder; real command to be supplied
+            uninstall_command="",
+            detection_rule=body.detection_script or "exit 0",
+        )
+        return {"id": new_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/db/apps")
+async def db_search(name: str | None = None, app_id: int | None = None):
+    try:
+        return search_apps(name=name, app_id=app_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/db/apps/{record_id}/deploy", status_code=201)
+async def db_deploy(record_id: int, package_id: str):
+    try:
+        app_id = deploy_app(record_id, package_id=package_id)
+        return {"intune_app_id": app_id}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
