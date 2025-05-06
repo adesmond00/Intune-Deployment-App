@@ -336,10 +336,24 @@ def upload_intunewin(
 
     Returns
     -------
-    The new mobileApp (Win32 LOB) ID.
+    The new mobileApp (Win32 LOB) ID.
     """
     logger.info("Starting Win32 upload: %s → '%s'", path, display_name)
-    intunewin = Path(path).expanduser().resolve()
+    
+    # Handle relative paths by resolving them relative to the API directory
+    # This ensures the file can be found regardless of the current working directory
+    if not os.path.isabs(path):
+        api_dir = os.path.join(os.path.dirname(__file__), '..')
+        abs_path = os.path.abspath(os.path.join(api_dir, path))
+        logger.info(f"Converting relative path '{path}' to absolute path: {abs_path}")
+        intunewin = Path(abs_path)
+    else:
+        intunewin = Path(path).expanduser().resolve().absolute()
+        
+    # Check if file exists
+    if not intunewin.exists():
+        raise FileNotFoundError(f"The .intunewin file was not found at: {intunewin}")
+        
     meta, encrypted = _parse_detection_xml(intunewin)
 
     app_id = _create_app_shell(
