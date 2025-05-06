@@ -24,6 +24,7 @@ import urllib.request
 import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import zipfile
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -203,16 +204,36 @@ def deploy_app(
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".intunewin")
         os.close(tmp_fd)
         try:
+            print(f"Downloading from {source_path} to {tmp_path}")
             urllib.request.urlretrieve(source_path, tmp_path)
+            
+            # Verify the downloaded file is a valid ZIP file
+            try:
+                with zipfile.ZipFile(tmp_path, 'r') as zip_test:
+                    # Test if the expected internal file exists
+                    if "IntuneWinPackage/Metadata/Detection.xml" not in zip_test.namelist():
+                        raise ValueError("Downloaded file is not a valid .intunewin package (Detection.xml not found)")
+            except zipfile.BadZipFile:
+                raise ValueError(f"Downloaded file from {source_path} is not a valid ZIP file. Please ensure it's a properly formatted .intunewin package.")
+                
         except Exception as exc:
-            os.remove(tmp_path)
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             raise RuntimeError(
-                f"Failed to download Intune package from {source_path}: {exc}"
+                f"Failed to download or validate Intune package from {source_path}: {exc}"
             ) from exc
         local_path = tmp_path
     else:
         # Treat as an existing local path (useful during development)
         local_path = source_path
+        
+        # Verify the local file is valid as well
+        try:
+            with zipfile.ZipFile(local_path, 'r') as zip_test:
+                if "IntuneWinPackage/Metadata/Detection.xml" not in zip_test.namelist():
+                    raise ValueError("Local file is not a valid .intunewin package (Detection.xml not found)")
+        except zipfile.BadZipFile:
+            raise ValueError(f"File at {local_path} is not a valid ZIP file. Please ensure it's a properly formatted .intunewin package.")
 
     try:
         intune_app_id = upload_intunewin(
