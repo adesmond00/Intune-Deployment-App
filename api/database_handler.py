@@ -215,6 +215,14 @@ def deploy_app(
                         for chunk in resp.iter_content(chunk_size=8192):
                             if chunk:  # Filter out keep-alive chunks
                                 f.write(chunk)
+                # DEBUG: Print file size and first 100 bytes for troubleshooting
+                file_size = os.path.getsize(tmp_path)
+                print(f"Downloaded file size: {file_size} bytes")
+                if file_size > 0:
+                    with open(tmp_path, "rb") as f:
+                        first_bytes = f.read(min(100, file_size))
+                        print(f"First bytes (hex): {first_bytes.hex()[:100]}")
+                        print(f"First bytes (ascii): {repr(first_bytes)}")
             except requests.RequestException as dl_err:
                 raise RuntimeError(f"Failed HTTP download from {source_path}: {dl_err}") from dl_err
 
