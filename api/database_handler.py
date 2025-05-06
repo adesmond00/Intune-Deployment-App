@@ -20,11 +20,10 @@ from __future__ import annotations
 
 import os
 import urllib.parse
+import urllib.request
 import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-import zipfile
-import requests
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -204,36 +203,16 @@ def deploy_app(
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".intunewin")
         os.close(tmp_fd)
         try:
-            # Use download_file helper which handles various edge cases with file hosts
-            download_file(source_path, tmp_path)
-            
-            # After download verify it's a valid intunewin file
-            try:
-                with zipfile.ZipFile(tmp_path, 'r') as zip_test:
-                    if "IntuneWinPackage/Metadata/Detection.xml" not in zip_test.namelist():
-                        raise ValueError("Downloaded file is not a valid .intunewin package (Detection.xml not found)")
-            except zipfile.BadZipFile:
-                raise ValueError(
-                    f"Downloaded file from {source_path} is not a valid ZIP file. Please ensure it's a properly formatted .intunewin package."
-                )
+            urllib.request.urlretrieve(source_path, tmp_path)
         except Exception as exc:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            os.remove(tmp_path)
             raise RuntimeError(
-                f"Failed to download or validate Intune package from {source_path}: {exc}"
+                f"Failed to download Intune package from {source_path}: {exc}"
             ) from exc
         local_path = tmp_path
     else:
         # Treat as an existing local path (useful during development)
         local_path = source_path
-        
-        # Verify the local file is valid as well
-        try:
-            with zipfile.ZipFile(local_path, 'r') as zip_test:
-                if "IntuneWinPackage/Metadata/Detection.xml" not in zip_test.namelist():
-                    raise ValueError("Local file is not a valid .intunewin package (Detection.xml not found)")
-        except zipfile.BadZipFile:
-            raise ValueError(f"File at {local_path} is not a valid ZIP file. Please ensure it's a properly formatted .intunewin package.")
 
     try:
         intune_app_id = upload_intunewin(
@@ -250,97 +229,3 @@ def deploy_app(
             os.remove(local_path)
 
     return intune_app_id
-
-
-# Create a specialized download_file function that knows how to handle file hosting services
-def download_file(url: str, destination: str) -> None:
-    """
-    Download a file from a URL to a destination path, handling different file hosting services.
-    
-    This function is specialized for handling .intunewin file downloads from various hosting 
-    services which might have special requirements.
-    
-    Parameters
-    ----------
-    url : str
-        The URL to download from
-    destination : str
-        The file path to save to
-    
-    Raises
-    ------
-    RuntimeError
-        If the download fails or the file appears to be invalid
-    """
-    print(f"Downloading from {url} to {destination}")
-    
-    # Set up proper headers that mimic a browser to avoid being served HTML pages
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': '*/*',  # Accept anything (not just HTML)
-        'Accept-Encoding': 'gzip, deflate, br',
-    }
-    
-    # For filebin specifically, we need to modify how we handle it
-    if 'filebin.net' in url:
-        # First request to get the redirect URL
-        try:
-            with requests.head(url, headers=headers, allow_redirects=False, timeout=30) as r:
-                if 300 <= r.status_code < 400 and 'Location' in r.headers:
-                    direct_url = r.headers['Location']
-                    print(f"Filebin redirect URL: {direct_url}")
-                    
-                    # Get the direct S3 URL with no caching/redirection
-                    with requests.get(direct_url, headers=headers, stream=True, timeout=60) as direct_resp:
-                        direct_resp.raise_for_status()
-                        
-                        # Write the file in chunks to the destination
-                        with open(destination, 'wb') as f:
-                            for chunk in direct_resp.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
-                        
-                        # Verify we got a binary file, not HTML
-                        file_size = os.path.getsize(destination)
-                        if file_size > 0:
-                            with open(destination, 'rb') as f:
-                                first_few_bytes = f.read(min(100, file_size))
-                                
-                                # Print diagnostic info
-                                print(f"Downloaded file size: {file_size} bytes")
-                                if first_few_bytes.startswith(b'<!doctype') or first_few_bytes.startswith(b'<html'):
-                                    raise RuntimeError("Received HTML instead of a binary file - access might be expired or requires login")
-                                elif first_few_bytes.startswith(b'PK'):
-                                    print("File appears to be a valid ZIP archive (starts with PK signature)")
-                                else:
-                                    print(f"First bytes: {repr(first_few_bytes[:20])}")
-                else:
-                    raise RuntimeError(f"Failed to get redirect URL from filebin.net: status {r.status_code}")
-        except (requests.RequestException, IOError) as e:
-            raise RuntimeError(f"Failed to download from filebin.net: {e}")
-    else:
-        # Generic download for other hosts
-        try:
-            with requests.get(url, headers=headers, stream=True, timeout=60) as resp:
-                resp.raise_for_status()
-                
-                with open(destination, 'wb') as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                
-                # Verify we got a binary file, not HTML
-                file_size = os.path.getsize(destination)
-                print(f"Downloaded file size: {file_size} bytes")
-                if file_size > 0:
-                    with open(destination, 'rb') as f:
-                        first_few_bytes = f.read(min(100, file_size))
-                        
-                        if first_few_bytes.startswith(b'<!doctype') or first_few_bytes.startswith(b'<html'):
-                            raise RuntimeError("Received HTML instead of a binary file")
-                        elif first_few_bytes.startswith(b'PK'):
-                            print("File appears to be a valid ZIP archive (starts with PK signature)")
-                        else:
-                            print(f"First bytes: {repr(first_few_bytes[:20])}")
-        except requests.RequestException as e:
-            raise RuntimeError(f"Failed to download file: {e}")
