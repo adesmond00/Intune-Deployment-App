@@ -19,6 +19,9 @@ Example
 from __future__ import annotations
 
 import os
+import urllib.parse
+import urllib.request
+import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -171,6 +174,10 @@ def deploy_app(
     -------
     str
         The newly created Intune application ID.
+
+    If the stored ``intunewin_path`` is an HTTP(S) URL, the file is downloaded
+    to a temporary location for the duration of the upload and deleted
+    afterwards.
     """
     # Query exactly one row
     sql = text(
@@ -181,14 +188,44 @@ def deploy_app(
         if row is None:
             raise ValueError(f"No packaged app found with id={record_id}")
 
+    # Build a friendly display name like "7‑Zip 23.01"
     display_name = f"{row['app_name']} {row['version']}".strip()
 
-    intune_app_id = upload_intunewin(
-        path=row["intunewin_path"],
-        display_name=display_name,
-        package_id=package_id,
-        description=description or display_name,
-        publisher=publisher,
-        detection_script=row.get("detection_rule") or "exit 0",
-    )
+    # ------------------------------------------------------------------
+    # Handle remote .intunewin packages
+    # ------------------------------------------------------------------
+    source_path = row["intunewin_path"]
+    parsed = urllib.parse.urlparse(source_path)
+    is_remote = parsed.scheme in ("http", "https")
+
+    if is_remote:
+        # Download the file to a secure temporary location
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".intunewin")
+        os.close(tmp_fd)
+        try:
+            urllib.request.urlretrieve(source_path, tmp_path)
+        except Exception as exc:
+            os.remove(tmp_path)
+            raise RuntimeError(
+                f"Failed to download Intune package from {source_path}: {exc}"
+            ) from exc
+        local_path = tmp_path
+    else:
+        # Treat as an existing local path (useful during development)
+        local_path = source_path
+
+    try:
+        intune_app_id = upload_intunewin(
+            path=local_path,
+            display_name=display_name,
+            package_id=package_id,
+            description=description or display_name,
+            publisher=publisher,
+            detection_script=row.get("detection_rule") or "exit 0",
+        )
+    finally:
+        # Always clean up any temporary file we created
+        if is_remote and os.path.exists(local_path):
+            os.remove(local_path)
+
     return intune_app_id
