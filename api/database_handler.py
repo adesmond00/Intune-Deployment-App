@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import os
 import urllib.parse
-import urllib.request
 import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import zipfile
+import requests
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -205,17 +205,28 @@ def deploy_app(
         os.close(tmp_fd)
         try:
             print(f"Downloading from {source_path} to {tmp_path}")
-            urllib.request.urlretrieve(source_path, tmp_path)
-            
-            # Verify the downloaded file is a valid ZIP file
+            # Stream download using requests so we properly follow redirects and
+            # avoid loading the entire file into memory.
+            try:
+                with requests.get(source_path, stream=True, timeout=60) as resp:
+                    resp.raise_for_status()
+
+                    with open(tmp_path, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            if chunk:  # Filter out keep-alive chunks
+                                f.write(chunk)
+            except requests.RequestException as dl_err:
+                raise RuntimeError(f"Failed HTTP download from {source_path}: {dl_err}") from dl_err
+
+            # Verify the downloaded file is a valid ZIP / IntuneWin package
             try:
                 with zipfile.ZipFile(tmp_path, 'r') as zip_test:
-                    # Test if the expected internal file exists
                     if "IntuneWinPackage/Metadata/Detection.xml" not in zip_test.namelist():
                         raise ValueError("Downloaded file is not a valid .intunewin package (Detection.xml not found)")
             except zipfile.BadZipFile:
-                raise ValueError(f"Downloaded file from {source_path} is not a valid ZIP file. Please ensure it's a properly formatted .intunewin package.")
-                
+                raise ValueError(
+                    f"Downloaded file from {source_path} is not a valid ZIP file. Please ensure it's a properly formatted .intunewin package."
+                )
         except Exception as exc:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
