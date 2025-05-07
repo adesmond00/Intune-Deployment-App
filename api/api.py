@@ -16,6 +16,7 @@ from .functions.winget import search_winget_packages
 from pydantic import BaseModel
 from .functions.intune_win32_uploader import upload_intunewin
 from .functions.ai_detection import generate_detection_script
+from .app_library_endpoint import router as app_library_router # Add this import
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -49,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include the App Library router
+app.include_router(app_library_router, prefix="/app-library", tags=["App Library"])
 
 @app.get("/")
 async def root():
@@ -146,6 +150,7 @@ async def get_detection_script(app_name: str):
         return {"script": script, "app_name": app_name}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
 
 if __name__ == "__main__":
     import uvicorn

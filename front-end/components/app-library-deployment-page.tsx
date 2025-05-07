@@ -83,6 +83,7 @@ interface AppVersion {
   detection_script?: string | null // Optional detection script
   install_command?: string | null // Optional install command
   uninstall_command?: string | null // Optional uninstall command
+  path: string; // Path to the .intunewin file in Backblaze from Supabase
 }
 
 /**
@@ -97,13 +98,14 @@ interface SelectedApp extends AppLibraryApp {
   detection_script?: string | null // Detection script for the selected version
   install_command?: string | null // Install command for the selected version
   uninstall_command?: string | null // Uninstall command for the selected version
+  path: string; // Path to the .intunewin file in Backblaze for this version
 }
 
 /**
- * Interface for the API request payload
+ * Interface for the App Library API request payload
  */
-interface UploadRequest {
-  path: string // Filesystem path to the .intunewin file
+interface AppLibraryUploadRequest {
+  backblaze_path: string // Path to the .intunewin file in Backblaze
   display_name: string // Friendly name to show in Intune
   package_id: string // App library package identifier
   publisher?: string // Publisher name (optional)
@@ -146,6 +148,7 @@ const fetchAppVersions = async (app: AppLibraryApp) => {
       detection_script: version.detection_script,
       install_command: version.install_command,
       uninstall_command: version.uninstall_command,
+      path: version.path, // Map path from Supabase data
     }))
 
     return versions
@@ -372,6 +375,7 @@ export function AppLibraryDeploymentPage() {
           detection_script: version.detection_script,
           install_command: version.install_command,
           uninstall_command: version.uninstall_command,
+          path: version.path, // Copy path from AppVersion to SelectedApp
           isLocked: false,
         },
       ])
@@ -439,11 +443,16 @@ export function AppLibraryDeploymentPage() {
       // Update current deploying app
       setCurrentDeployingApp(app.name)
 
-      // Prepare request payload
-      const payload: UploadRequest = {
-        path: `/path/to/app-library/${app.version_id || app.app_id}.intunewin`, // This would be dynamically generated in a real app
+      // Prepare request payload for App Library
+      // IMPORTANT: app.path (formerly app.backblaze_file_path) needs to be populated correctly.
+      // This path should point to the specific .intunewin file identifier in Backblaze for the app.version.
+      if (!app.path) {
+        throw new Error(`File path (Backblaze identifier) is missing for app: ${app.name} version: ${app.version}`);
+      }
+      const payload: AppLibraryUploadRequest = {
+        backblaze_path: app.path, // Use app.path here
         display_name: app.name,
-        package_id: app.app_id,
+        package_id: app.app_id, // This is the App Library's unique ID (e.g., APP001)
         publisher: app.publisher,
         description: app.description || "",
         detection_script: app.detection_script || undefined,
@@ -451,8 +460,8 @@ export function AppLibraryDeploymentPage() {
         uninstall_command: app.uninstall_command || undefined,
       }
 
-      // Make API request
-      const response = await fetch(`${API_BASE_URL}/apps`, {
+      // Make API request to the new App Library endpoint
+      const response = await fetch(`${API_BASE_URL}/app-library/deploy`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
