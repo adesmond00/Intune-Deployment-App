@@ -147,39 +147,6 @@ async def get_detection_script(app_name: str):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-@app.post("/db/apps", status_code=201)
-async def db_add_app(body: UploadRequest):
-    """Add a packaged app record to the database (no Intune upload)."""
-    try:
-        new_id = add_intune_app(
-            app_name=body.display_name,
-            version="latest",  # For now default; UI can pass appropriate value
-            intunewin_path=body.path,
-            install_command=body.path,  # Placeholder; real command to be supplied
-            uninstall_command="",
-            detection_rule=body.detection_script or "exit 0",
-        )
-        return {"id": new_id}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.get("/db/apps")
-async def db_search(name: str | None = None, app_id: int | None = None):
-    try:
-        return search_apps(name=name, app_id=app_id)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.post("/db/apps/{record_id}/deploy", status_code=201)
-async def db_deploy(record_id: int, package_id: str):
-    try:
-        app_id = deploy_app(record_id, package_id=package_id)
-        return {"intune_app_id": app_id}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
 if __name__ == "__main__":
     import uvicorn
     import sys
