@@ -299,7 +299,7 @@ export function WingetDeploymentPage() {
     const target = selectedApps.find(a => a.id === appId);
     if (!target) return;
 
-    // Use the live value from the “Display Name” field (currently stored in customDescription).
+    // Use the live value from the “Display Name” field (currently stored in customDescription).
     // Fallback to the original package name if the user hasn’t entered anything.
     const displayName =
       target.customDescription && target.customDescription.trim().length > 0
